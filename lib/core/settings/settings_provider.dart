@@ -23,6 +23,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await ref.read(settingsRepositoryProvider).writeRestSeconds(seconds);
     state = state.copyWith(restSeconds: seconds);
   }
+
+  Future<void> setLiveActivityEnabled(bool enabled) async {
+    await ref.read(settingsRepositoryProvider).writeLiveActivityEnabled(enabled);
+    state = state.copyWith(liveActivityEnabled: enabled);
+  }
 }
 
 final settingsProvider =

@@ -43,6 +43,7 @@ dependencies:
   uuid: ^4.5.3
   intl: ^0.20.2
   shared_preferences: ^2.5.5
+  live_activities: ^2.4.0
 
 dev_dependencies:
   flutter_test:
@@ -69,13 +70,8 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
-  # To add assets to your application, add an assets section, like this:
-  # assets:
-  #   - images/a_dot_burr.jpeg
-  #   - images/a_dot_ham.jpeg
-
-  # An image asset can refer to one or more resolution-specific "variants", see
-  # https://flutter.dev/to/resolution-aware-images
+  assets:
+    - assets/data/exercises_seed.json
 
 # Launcher icons. Drop a 1024x1024 source at assets/icon/icon.png, then run:
 #   dart run flutter_launcher_icons

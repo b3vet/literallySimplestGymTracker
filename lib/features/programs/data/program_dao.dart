@@ -135,6 +135,37 @@ class ProgramDao {
     return rows.isEmpty ? null : Exercise.fromRow(rows.first);
   }
 
+  /// Names of every exercise the user has ever named, sorted alphabetically
+  /// (case-insensitive). Used to populate the program-editor combobox.
+  Future<List<String>> listKnownExerciseNames() async {
+    final rows = await _db.query(
+      'exercises',
+      columns: ['name'],
+      orderBy: 'name COLLATE NOCASE',
+    );
+    return rows.map((r) => r['name'] as String).toList();
+  }
+
+  /// Most recent [ProgramExercise] in any program/day that references the
+  /// exercise with the given case-insensitive name. Used to autofill
+  /// sets/reps/weight when the user picks an existing exercise in the editor.
+  Future<ProgramExercise?> mostRecentProgramExerciseForName(String name) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT pe.*
+      FROM program_exercises pe
+      JOIN exercises e     ON e.id  = pe.exercise_id
+      JOIN program_days pd ON pd.id = pe.program_day_id
+      JOIN programs p      ON p.id  = pd.program_id
+      WHERE e.name = ? COLLATE NOCASE
+      ORDER BY p.created_at DESC, pd.position DESC, pe.position DESC
+      LIMIT 1
+      ''',
+      [name.trim()],
+    );
+    return rows.isEmpty ? null : ProgramExercise.fromRow(rows.first);
+  }
+
   // ---------- Program exercises ----------
 
   Future<List<ProgramExerciseView>> listProgramExercises(

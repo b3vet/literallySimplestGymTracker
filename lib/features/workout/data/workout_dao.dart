@@ -164,4 +164,61 @@ class WorkoutDao {
     );
     return rows.map(WorkoutSession.fromRow).toList();
   }
+
+  /// Most recent completed session for the given program day, started strictly
+  /// before [before]. Returns null if none exists.
+  Future<WorkoutSession?> previousCompletedSessionForDay(
+    String programDayId, {
+    required DateTime before,
+  }) async {
+    final rows = await _db.query(
+      'workout_sessions',
+      where: 'program_day_id = ? AND status = ? AND started_at < ?',
+      whereArgs: [
+        programDayId,
+        SessionStatus.completed.name,
+        before.millisecondsSinceEpoch,
+      ],
+      orderBy: 'started_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : WorkoutSession.fromRow(rows.first);
+  }
+
+  /// Tonnage (sum of weight × reps in kg) per completed session, most recent
+  /// first. Used for the post-workout trend chart.
+  Future<List<TonnagePoint>> totalTonnageBySession({int limit = 8}) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT s.id AS id, s.started_at AS started_at,
+             COALESCE(SUM(w.weight * w.reps), 0) AS tonnage
+      FROM workout_sessions s
+      LEFT JOIN workout_sets w ON w.session_id = s.id
+      WHERE s.status = ?
+      GROUP BY s.id
+      ORDER BY s.started_at DESC
+      LIMIT ?
+      ''',
+      [SessionStatus.completed.name, limit],
+    );
+    return rows
+        .map((r) => TonnagePoint(
+              sessionId: r['id'] as String,
+              startedAt: DateTime.fromMillisecondsSinceEpoch(
+                  (r['started_at'] as num).toInt()),
+              tonnageKg: (r['tonnage'] as num).toDouble(),
+            ))
+        .toList();
+  }
+}
+
+class TonnagePoint {
+  const TonnagePoint({
+    required this.sessionId,
+    required this.startedAt,
+    required this.tonnageKg,
+  });
+  final String sessionId;
+  final DateTime startedAt;
+  final double tonnageKg;
 }

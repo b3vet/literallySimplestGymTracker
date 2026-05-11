@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +6,7 @@ import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/pickers/picker_column.dart';
 import '../domain/active_session.dart';
 
 class SetLogResult {
@@ -147,11 +147,11 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
                 children: [
                   Expanded(
                     flex: 25,
-                    child: _PickerColumn(
+                    child: PickerColumn(
                       label: 'REPS',
                       controller: _repsCtrl,
                       itemCount: _repsMax - _repsMin + 1,
-                      builder: (i) => _PickerText('${i + _repsMin}'),
+                      builder: (i) => PickerText('${i + _repsMin}'),
                       onChanged: (i) {
                         setState(() => _reps = i + _repsMin);
                         HapticFeedback.selectionClick();
@@ -160,11 +160,11 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
                   ),
                   Expanded(
                     flex: 45,
-                    child: _PickerColumn(
+                    child: PickerColumn(
                       label: 'WEIGHT (${unit.short})',
                       controller: _weightCtrl,
                       itemCount: weightCount,
-                      builder: (i) => _PickerText(
+                      builder: (i) => PickerText(
                         _formatWeightLabel(i * _weightStep, unit),
                       ),
                       onChanged: (i) {
@@ -175,11 +175,11 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
                   ),
                   Expanded(
                     flex: 25,
-                    child: _PickerColumn(
+                    child: PickerColumn(
                       label: 'RIR',
                       controller: _rirCtrl,
                       itemCount: _rirMax + 1,
-                      builder: (i) => _PickerText('$i'),
+                      builder: (i) => PickerText('$i'),
                       onChanged: (i) {
                         setState(() => _rir = i);
                         HapticFeedback.selectionClick();
@@ -190,7 +190,7 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
               ),
             ),
             const SizedBox(height: 8),
-            _StepToggle(
+            WeightStepToggle(
               unit: unit,
               current: _weightStep,
               onChanged: (s) async {
@@ -252,98 +252,3 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
   }
 }
 
-class _PickerColumn extends StatelessWidget {
-  const _PickerColumn({
-    required this.label,
-    required this.controller,
-    required this.itemCount,
-    required this.builder,
-    required this.onChanged,
-  });
-  final String label;
-  final FixedExtentScrollController controller;
-  final int itemCount;
-  final Widget Function(int index) builder;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 4),
-          child: Text(label,
-              style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                    color: AppColors.textSecondary,
-                  )),
-        ),
-        Expanded(
-          child: CupertinoPicker.builder(
-            scrollController: controller,
-            itemExtent: 48,
-            useMagnifier: true,
-            magnification: 1.15,
-            squeeze: 1.1,
-            backgroundColor: AppColors.elevated,
-            selectionOverlay: const CupertinoPickerDefaultSelectionOverlay(
-              background: Color(0x1AFF5A1F),
-            ),
-            onSelectedItemChanged: onChanged,
-            childCount: itemCount,
-            itemBuilder: (context, i) => Center(child: builder(i)),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PickerText extends StatelessWidget {
-  const _PickerText(this.text);
-  final String text;
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      text,
-      style: const TextStyle(
-        fontSize: 24,
-        fontWeight: FontWeight.w500,
-        color: AppColors.textPrimary,
-      ),
-    );
-  }
-}
-
-class _StepToggle extends StatelessWidget {
-  const _StepToggle({
-    required this.unit,
-    required this.current,
-    required this.onChanged,
-  });
-  final WeightUnit unit;
-  final double current;
-  final ValueChanged<double> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final options = unit == WeightUnit.kg
-        ? const [0.5, 1.0]
-        : const [1.0, 2.5];
-    return SegmentedButton<double>(
-      segments: [
-        for (final o in options)
-          ButtonSegment(
-            value: o,
-            label: Text('${o == o.roundToDouble() ? o.toStringAsFixed(0) : o} ${unit.short}'),
-          ),
-      ],
-      selected: {current},
-      onSelectionChanged: (s) => onChanged(s.first),
-      style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: AppColors.primary,
-        selectedForegroundColor: Colors.white,
-        side: const BorderSide(color: AppColors.divider),
-      ),
-    );
-  }
-}

@@ -1,3 +1,5 @@
+import 'dart:io' show Platform;
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -80,6 +82,28 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
+          if (Platform.isIOS) ...[
+            const SizedBox(height: 24),
+            _SectionHeader('Lock screen'),
+            _Card(
+              child: Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  activeThumbColor: AppColors.primary,
+                  title: const Text('Live Activity'),
+                  subtitle: const Text(
+                      'Show the current exercise and rest timer on the lock '
+                      'screen and Dynamic Island during a workout.'),
+                  value: s.liveActivityEnabled,
+                  onChanged: (v) => ref
+                      .read(settingsProvider.notifier)
+                      .setLiveActivityEnabled(v),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

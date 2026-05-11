@@ -1,14 +1,39 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
 import '../application/rest_timer_controller.dart';
 
-class RestTimerBanner extends ConsumerWidget {
+class RestTimerBanner extends ConsumerStatefulWidget {
   const RestTimerBanner({super.key});
+  @override
+  ConsumerState<RestTimerBanner> createState() => _RestTimerBannerState();
+}
+
+class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
+  Timer? _ticker;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  void initState() {
+    super.initState();
+    // Self-driven 1Hz tick — the parent screen's rebuilds don't propagate to
+    // a const ConsumerWidget unless its provider state changes, so we manage
+    // our own redraw cadence here.
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _ticker?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final state = ref.watch(restTimerProvider);
     if (!state.running) return const SizedBox.shrink();
     final remaining = state.remaining;
@@ -34,14 +59,12 @@ class RestTimerBanner extends ConsumerWidget {
           ),
           _RoundBtn(
             icon: Icons.remove,
-            onTap: () =>
-                ref.read(restTimerProvider.notifier).adjust(-15),
+            onTap: () => ref.read(restTimerProvider.notifier).adjust(-15),
           ),
           const SizedBox(width: 8),
           _RoundBtn(
             icon: Icons.add,
-            onTap: () =>
-                ref.read(restTimerProvider.notifier).adjust(15),
+            onTap: () => ref.read(restTimerProvider.notifier).adjust(15),
           ),
           const SizedBox(width: 8),
           _RoundBtn(
@@ -72,7 +95,7 @@ class _RoundBtn extends StatelessWidget {
       child: Container(
         width: 32,
         height: 32,
-        decoration: BoxDecoration(
+        decoration: const BoxDecoration(
           color: AppColors.surface,
           shape: BoxShape.circle,
         ),
