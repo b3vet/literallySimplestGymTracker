@@ -195,6 +195,7 @@ class ProgramDao {
     required int targetRepsMin,
     required int targetRepsMax,
     required double defaultWeightKg,
+    double? weightStepKg,
   }) async {
     final exercise = await findOrCreateExercise(exerciseName);
     final count = Sqflite.firstIntValue(await _db.rawQuery(
@@ -211,6 +212,7 @@ class ProgramDao {
       targetRepsMin: targetRepsMin,
       targetRepsMax: targetRepsMax,
       defaultWeightKg: defaultWeightKg,
+      weightStepKg: weightStepKg,
     );
     await _db.insert('program_exercises', pe.toRow());
     return pe;

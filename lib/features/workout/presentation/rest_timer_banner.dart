@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../application/rest_timer_controller.dart';
 
 class RestTimerBanner extends ConsumerStatefulWidget {
@@ -18,9 +19,8 @@ class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
   @override
   void initState() {
     super.initState();
-    // Self-driven 1Hz tick — the parent screen's rebuilds don't propagate to
-    // a const ConsumerWidget unless its provider state changes, so we manage
-    // our own redraw cadence here.
+    // 1Hz self-driven tick. The parent's rebuilds don't propagate to a const
+    // ConsumerWidget unless its provider state changes — we own our cadence.
     _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -34,44 +34,64 @@ class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final state = ref.watch(restTimerProvider);
     if (!state.running) return const SizedBox.shrink();
     final remaining = state.remaining;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: AppColors.elevated,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.primary, width: 1),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.timer_outlined, color: AppColors.primary),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              'Rest · ${_fmt(remaining)}',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    fontFeatures: const [FontFeature.tabularFigures()],
+    // Bottom margin separates the banner from the content below.
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+          LsSpace.screen, LsGap.tight, LsSpace.screen, LsGap.section),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        decoration: BoxDecoration(
+          color: t.accent.accentDim,
+          borderRadius: BorderRadius.circular(LsRadius.r3),
+          border: Border.all(color: t.accent.accent),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.timer, color: t.accent.accent, size: 28),
+            const SizedBox(width: LsGap.inline),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'REST',
+                  style: LsType.monoMeta.copyWith(
+                    color: t.surface.text2,
+                    fontSize: 13,
                   ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _fmt(remaining),
+                  style: LsType.displayM.copyWith(
+                    color: t.accent.accent,
+                    fontSize: 36,
+                    height: 1.0,
+                  ),
+                ),
+              ],
             ),
-          ),
-          _RoundBtn(
-            icon: Icons.remove,
-            onTap: () => ref.read(restTimerProvider.notifier).adjust(-15),
-          ),
-          const SizedBox(width: 8),
-          _RoundBtn(
-            icon: Icons.add,
-            onTap: () => ref.read(restTimerProvider.notifier).adjust(15),
-          ),
-          const SizedBox(width: 8),
-          _RoundBtn(
-            icon: Icons.close,
-            onTap: () => ref.read(restTimerProvider.notifier).dismiss(),
-          ),
-        ],
+            const Spacer(),
+            _Chip(
+              label: '-15s',
+              onTap: () => ref.read(restTimerProvider.notifier).adjust(-15),
+            ),
+            const SizedBox(width: LsGap.tight),
+            _Chip(
+              label: '+15s',
+              onTap: () => ref.read(restTimerProvider.notifier).adjust(15),
+            ),
+            const SizedBox(width: LsGap.tight),
+            _Chip(
+              label: 'Cancel',
+              danger: true,
+              onTap: () => ref.read(restTimerProvider.notifier).dismiss(),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -83,24 +103,36 @@ class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
   }
 }
 
-class _RoundBtn extends StatelessWidget {
-  const _RoundBtn({required this.icon, required this.onTap});
-  final IconData icon;
+class _Chip extends StatelessWidget {
+  const _Chip({
+    required this.label,
+    required this.onTap,
+    this.danger = false,
+  });
+  final String label;
   final VoidCallback onTap;
+  final bool danger;
   @override
   Widget build(BuildContext context) {
-    return InkResponse(
-      onTap: onTap,
-      radius: 20,
-      child: Container(
-        width: 32,
-        height: 32,
-        decoration: const BoxDecoration(
-          color: AppColors.surface,
-          shape: BoxShape.circle,
+    final t = LsTheme.of(context);
+    final fg = danger ? LsSignals.danger : t.surface.text;
+    return Material(
+      color: t.surface.surface2,
+      borderRadius: BorderRadius.circular(LsRadius.r2),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r2),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            border: Border.all(color: t.surface.border),
+            borderRadius: BorderRadius.circular(LsRadius.r2),
+          ),
+          child: Text(
+            label,
+            style: LsType.monoMeta.copyWith(color: fg, fontSize: 14),
+          ),
         ),
-        alignment: Alignment.center,
-        child: Icon(icon, size: 18, color: AppColors.textPrimary),
       ),
     );
   }

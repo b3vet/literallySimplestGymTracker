@@ -12,12 +12,17 @@ class SessionSummaryRow {
     required this.totalVolumeKg,
     required this.topExerciseName,
     required this.dayName,
+    required this.programName,
   });
   final WorkoutSession session;
   final int setCount;
   final double totalVolumeKg;
   final String? topExerciseName;
   final String? dayName;
+
+  /// Name of the program the session belonged to. Null when the day was
+  /// orphaned (program deleted) or when no program day was attached.
+  final String? programName;
 }
 
 class SessionDetailData {
@@ -51,9 +56,14 @@ final historyListProvider =
       topName = e?.name;
     }
     String? dayName;
+    String? programName;
     if (s.programDayId != null) {
       final d = await programDao.findDay(s.programDayId!);
       dayName = d?.name;
+      if (d != null) {
+        final p = await programDao.findProgram(d.programId);
+        programName = p?.name;
+      }
     }
     rows.add(SessionSummaryRow(
       session: s,
@@ -61,6 +71,7 @@ final historyListProvider =
       totalVolumeKg: volume,
       topExerciseName: topName,
       dayName: dayName,
+      programName: programName,
     ));
   }
   return rows;

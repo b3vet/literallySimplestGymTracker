@@ -8,6 +8,7 @@ class ProgramExercise {
     required this.targetRepsMin,
     required this.targetRepsMax,
     required this.defaultWeightKg,
+    this.weightStepKg,
   });
   final String id;
   final String programDayId;
@@ -18,12 +19,19 @@ class ProgramExercise {
   final int targetRepsMax;
   final double defaultWeightKg;
 
+  /// Per-exercise weight step in **kg**. Persisted as NULL when the user has
+  /// never customised it — callers should fall back to the unit's default
+  /// step (`WeightUnit.defaultStep`) for display.
+  final double? weightStepKg;
+
   ProgramExercise copyWith({
     int? position,
     int? targetSets,
     int? targetRepsMin,
     int? targetRepsMax,
     double? defaultWeightKg,
+    double? weightStepKg,
+    bool clearWeightStep = false,
   }) =>
       ProgramExercise(
         id: id,
@@ -34,6 +42,7 @@ class ProgramExercise {
         targetRepsMin: targetRepsMin ?? this.targetRepsMin,
         targetRepsMax: targetRepsMax ?? this.targetRepsMax,
         defaultWeightKg: defaultWeightKg ?? this.defaultWeightKg,
+        weightStepKg: clearWeightStep ? null : (weightStepKg ?? this.weightStepKg),
       );
 
   factory ProgramExercise.fromRow(Map<String, Object?> row) => ProgramExercise(
@@ -45,6 +54,7 @@ class ProgramExercise {
         targetRepsMin: row['target_reps_min'] as int,
         targetRepsMax: row['target_reps_max'] as int,
         defaultWeightKg: (row['default_weight'] as num).toDouble(),
+        weightStepKg: (row['weight_step'] as num?)?.toDouble(),
       );
 
   Map<String, Object?> toRow() => {
@@ -56,6 +66,7 @@ class ProgramExercise {
         'target_reps_min': targetRepsMin,
         'target_reps_max': targetRepsMax,
         'default_weight': defaultWeightKg,
+        'weight_step': weightStepKg,
       };
 }
 

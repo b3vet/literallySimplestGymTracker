@@ -4,7 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/layout.dart';
 import '../../programs/application/programs_provider.dart';
 import '../application/active_workout_controller.dart';
 import '../domain/active_session.dart';
@@ -13,8 +15,8 @@ Future<void> showProgramStatusSheet(BuildContext context) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: AppColors.elevated,
-    builder: (ctx) => const _ProgramStatusSheet(),
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => const LsSheet(child: _ProgramStatusSheet()),
   );
 }
 
@@ -23,12 +25,18 @@ class _ProgramStatusSheet extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
     final async = ref.watch(activeSessionProvider);
     final session = async.value;
     if (session == null) {
-      return const SizedBox(
+      return SizedBox(
         height: 200,
-        child: Center(child: Text('No active workout')),
+        child: Center(
+          child: Text(
+            'No active workout',
+            style: LsType.bodyM.copyWith(color: t.surface.text2),
+          ),
+        ),
       );
     }
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
@@ -41,76 +49,56 @@ class _ProgramStatusSheet extends ConsumerWidget {
     final completed = _completedCount(session);
     final elapsed = DateTime.now().difference(session.startedAt);
 
-    return SafeArea(
-      top: false,
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.of(context).size.height * 0.8,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 8),
-            Center(
-              child: Container(
-                width: 36,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.divider,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LsSheetHeader(eyebrow: 'PROGRAM', title: dayName),
+          const SizedBox(height: LsGap.sub),
+          Text(
+            '$completed OF ${session.queue.length} DONE · '
+            '${_formatDuration(elapsed)} ELAPSED',
+            style: LsType.monoMeta.copyWith(
+              color: t.surface.text2,
+              fontSize: 14,
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 12, 20, 4),
-              child: Text(
-                dayName.toUpperCase(),
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
+          ),
+          const SizedBox(height: LsGap.sub),
+          Container(height: 1, color: t.surface.border),
+          Flexible(
+            child: ListView.separated(
+              padding: EdgeInsets.zero,
+              shrinkWrap: true,
+              itemCount: session.queue.length,
+              separatorBuilder: (_, _) =>
+                  Container(height: 1, color: t.surface.border),
+              itemBuilder: (ctx, i) {
+                final pe = session.queue[i];
+                final logged = session.loggedSets
+                    .where((s) => s.exerciseId == pe.exerciseId)
+                    .length;
+                final state = _stateOf(session, i, logged);
+                return _ExerciseRow(
+                  index: i + 1,
+                  exercise: pe,
+                  setsLogged: logged,
+                  unit: unit,
+                  state: state,
+                  onTap: () async {
+                    await ref
+                        .read(activeSessionProvider.notifier)
+                        .goToExerciseIndex(i);
+                    if (ctx.mounted) Navigator.pop(ctx);
+                  },
+                );
+              },
             ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Text(
-                '$completed of ${session.queue.length} done '
-                '· ${_formatDuration(elapsed)} elapsed',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-              ),
-            ),
-            const Divider(height: 1, color: AppColors.divider),
-            Flexible(
-              child: ListView.separated(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                shrinkWrap: true,
-                itemCount: session.queue.length,
-                separatorBuilder: (_, _) =>
-                    const Divider(height: 1, color: AppColors.divider),
-                itemBuilder: (ctx, i) {
-                  final pe = session.queue[i];
-                  final logged = session.loggedSets
-                      .where((s) => s.exerciseId == pe.exerciseId)
-                      .length;
-                  final state = _stateOf(session, i, logged);
-                  return _ExerciseRow(
-                    index: i + 1,
-                    exercise: pe,
-                    setsLogged: logged,
-                    unit: unit,
-                    state: state,
-                    onTap: () async {
-                      await ref
-                          .read(activeSessionProvider.notifier)
-                          .goToExerciseIndex(i);
-                      if (ctx.mounted) Navigator.pop(ctx);
-                    },
-                  );
-                },
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -156,49 +144,47 @@ class _ExerciseRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final repsLabel = exercise.targetRepsMin == exercise.targetRepsMax
         ? '${exercise.targetRepsMin}'
-        : '${exercise.targetRepsMin}–${exercise.targetRepsMax}';
+        : '${exercise.targetRepsMin}-${exercise.targetRepsMax}';
     return InkWell(
       onTap: onTap,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        padding: const EdgeInsets.symmetric(vertical: 16),
         child: Row(
           children: [
-            _StateIcon(state: state, index: index),
+            _StateChip(state: state, index: index),
             const SizedBox(width: 14),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    exercise.exerciseName,
+                    exercise.exerciseName.toUpperCase(),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: state == _ExState.current
-                              ? FontWeight.w700
-                              : FontWeight.w500,
-                          decoration: state == _ExState.skipped
-                              ? TextDecoration.lineThrough
-                              : null,
-                        ),
+                    style: LsType.displayM.copyWith(
+                      color: state == _ExState.skipped
+                          ? t.surface.text3
+                          : t.surface.text,
+                      fontSize: 22,
+                      decoration: state == _ExState.skipped
+                          ? TextDecoration.lineThrough
+                          : null,
+                    ),
                   ),
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 6),
                   Text(
-                    '$setsLogged / ${exercise.targetSets} sets · '
-                    '$repsLabel reps · '
-                    '${WeightConv.format(exercise.defaultWeightKg, unit)}',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          color: AppColors.textSecondary,
-                          fontSize: 14,
-                        ),
+                    '$setsLogged / ${exercise.targetSets} SETS · '
+                    '$repsLabel REPS · '
+                    '${WeightConv.format(exercise.defaultWeightKg, unit).toUpperCase()}',
+                    style: LsType.monoMeta.copyWith(color: t.surface.text2),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right,
-                color: AppColors.textSecondary, size: 20),
+            Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
           ],
         ),
       ),
@@ -206,48 +192,36 @@ class _ExerciseRow extends StatelessWidget {
   }
 }
 
-class _StateIcon extends StatelessWidget {
-  const _StateIcon({required this.state, required this.index});
+class _StateChip extends StatelessWidget {
+  const _StateChip({required this.state, required this.index});
   final _ExState state;
   final int index;
-
   @override
   Widget build(BuildContext context) {
-    final (color, child) = switch (state) {
-      _ExState.done => (
-          AppColors.success,
-          const Icon(Icons.check, size: 18, color: Colors.white)
-        ),
-      _ExState.current => (
-          AppColors.primary,
-          Text('$index',
-              style: const TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.w700,
-              ))
-        ),
-      _ExState.upcoming => (
-          AppColors.surface,
-          Text('$index',
-              style: const TextStyle(color: AppColors.textSecondary))
-        ),
-      _ExState.skipped => (
-          AppColors.surface,
-          const Icon(Icons.remove, size: 16, color: AppColors.textSecondary)
-        ),
+    final t = LsTheme.of(context);
+    final (bg, fg) = switch (state) {
+      _ExState.done => (t.accent.accent, t.accent.accentInk),
+      _ExState.current => (t.accent.accentDim, t.accent.accent),
+      _ExState.upcoming => (t.surface.surface, t.surface.text2),
+      _ExState.skipped => (t.surface.surface, t.surface.text3),
     };
     return Container(
-      width: 28,
-      height: 28,
-      decoration: BoxDecoration(
-        color: color,
-        shape: BoxShape.circle,
-        border: state == _ExState.upcoming || state == _ExState.skipped
-            ? Border.all(color: AppColors.divider)
-            : null,
-      ),
+      width: 36,
+      height: 36,
       alignment: Alignment.center,
-      child: child,
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(LsRadius.r2),
+        border: Border.all(
+          color: state == _ExState.done ? t.accent.accent : t.surface.border,
+        ),
+      ),
+      child: state == _ExState.done
+          ? Icon(Icons.check, size: 18, color: fg)
+          : Text(
+              index.toString().padLeft(2, '0'),
+              style: LsType.monoMeta.copyWith(color: fg, fontSize: 13),
+            ),
     );
   }
 }
@@ -255,6 +229,6 @@ class _StateIcon extends StatelessWidget {
 String _formatDuration(Duration d) {
   final h = d.inHours;
   final m = d.inMinutes.remainder(60);
-  if (h > 0) return '${h}h ${m}m';
-  return '${m}m';
+  if (h > 0) return '${h}H ${m}M';
+  return '${m}M';
 }

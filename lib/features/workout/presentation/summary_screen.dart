@@ -6,7 +6,10 @@ import 'package:go_router/go_router.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 import '../../programs/application/programs_provider.dart';
 import '../application/active_workout_controller.dart';
 import '../application/pr_detector.dart';
@@ -21,7 +24,6 @@ final _sessionSummaryProvider =
   if (session == null) return null;
   final sets = await dao.setsForSession(id);
 
-  // Resolve exercise names.
   final exerciseIds = sets.map((s) => s.exerciseId).toSet();
   final programDao = ref.watch(programDaoProvider);
   final nameById = <String, String>{};
@@ -30,7 +32,17 @@ final _sessionSummaryProvider =
     if (e != null) nameById[id] = e.name;
   }
 
-  // Comparison vs previous session of the same program day, if any.
+  String? dayName;
+  String? programName;
+  if (session.programDayId != null) {
+    final d = await programDao.findDay(session.programDayId!);
+    dayName = d?.name;
+    if (d != null) {
+      final p = await programDao.findProgram(d.programId);
+      programName = p?.name;
+    }
+  }
+
   Map<String, List<WorkoutSet>>? prevByExercise;
   if (session.programDayId != null) {
     final prev = await dao.previousCompletedSessionForDay(
@@ -51,13 +63,14 @@ final _sessionSummaryProvider =
     sets: sets,
     exerciseNames: nameById,
     prevByExercise: prevByExercise,
+    dayName: dayName,
+    programName: programName,
   );
 });
 
 final _tonnageTrendProvider = FutureProvider<List<TonnagePoint>>((ref) async {
   final dao = ref.watch(workoutDaoProvider);
   final pts = await dao.totalTonnageBySession(limit: 8);
-  // Most recent first → reverse to chronological order for the chart.
   return pts.reversed.toList();
 });
 
@@ -67,11 +80,15 @@ class _SummaryData {
     required this.sets,
     required this.exerciseNames,
     required this.prevByExercise,
+    required this.dayName,
+    required this.programName,
   });
   final WorkoutSession session;
   final List<WorkoutSet> sets;
   final Map<String, String> exerciseNames;
   final Map<String, List<WorkoutSet>>? prevByExercise;
+  final String? dayName;
+  final String? programName;
 }
 
 class SummaryScreen extends ConsumerWidget {
@@ -80,60 +97,97 @@ class SummaryScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
     final data = ref.watch(_sessionSummaryProvider(sessionId));
     final prs = ref.watch(sessionPrsProvider(sessionId));
     final trend = ref.watch(_tonnageTrendProvider);
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Workout complete'),
-        automaticallyImplyLeading: false,
-        actions: [
-          TextButton(
-            onPressed: () => context.go('/'),
-            child: const Text('Done'),
-          ),
-        ],
-      ),
-      body: data.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Failed to load: $e')),
-        data: (d) {
-          if (d == null) {
-            return const Center(child: Text('Workout not found.'));
-          }
-          final byExercise = <String, List<WorkoutSet>>{};
-          for (final s in d.sets) {
-            byExercise.putIfAbsent(s.exerciseId, () => []).add(s);
-          }
-          final totalVolumeKg = d.sets
-              .fold<double>(0, (t, s) => t + s.weightKg * s.reps);
-          final setCount = d.sets.length;
-          final durationStr = _formatDuration(d.session.duration);
-
-          final trendPts = trend.maybeWhen(
-            data: (v) => v,
-            orElse: () => const <TonnagePoint>[],
+    return data.when(
+      loading: () => const Scaffold(
+          body: Center(child: CircularProgressIndicator())),
+      error: (e, _) => Scaffold(body: Center(child: Text('Failed to load: $e'))),
+      data: (d) {
+        if (d == null) {
+          return Scaffold(
+            body: Center(
+              child: Text('Workout not found.',
+                  style: LsType.bodyM.copyWith(color: t.surface.text2)),
+            ),
           );
+        }
+        // Topbar title = workout (program) name, falling back to "Complete"
+        // when the session was attached to an orphaned day.
+        final headerTitle = d.programName ?? 'Complete';
+        final heroDay = (d.dayName ?? 'Workout').toUpperCase();
 
-          return ListView(
-            padding: const EdgeInsets.all(16),
+        final byExercise = <String, List<WorkoutSet>>{};
+        for (final s in d.sets) {
+          byExercise.putIfAbsent(s.exerciseId, () => []).add(s);
+        }
+        final totalVolumeKg =
+            d.sets.fold<double>(0, (t, s) => t + s.weightKg * s.reps);
+        final setCount = d.sets.length;
+        final durationStr = _formatDuration(d.session.duration);
+        final trendPts = trend.maybeWhen(
+          data: (v) => v,
+          orElse: () => const <TonnagePoint>[],
+        );
+
+        return LsScreen(
+          topGap: LsGap.loose,
+          topbar: LsTopbar(
+            title: headerTitle,
+            showBack: false,
+            trailing: LsIconSquare(
+              icon: Icons.check,
+              onTap: () => context.go('/'),
+              semanticLabel: 'Done',
+            ),
+          ),
+          child: ListView(
+            padding: EdgeInsets.zero,
             children: [
-              _StatRow(
-                children: [
-                  _Stat('Duration', durationStr),
-                  _Stat('Sets', '$setCount'),
-                  _Stat('Volume', WeightConv.format(totalVolumeKg, unit)),
+              // WORKOUT SUMMARY eyebrow above the hero — page content, not header.
+              Align(
+                alignment: Alignment.centerRight,
+                child: EyebrowLabel('WORKOUT SUMMARY'),
+              ),
+              const SizedBox(height: LsGap.sub),
+              // Hero day name — same scale as the home screen's "TRAIN HEAVY."
+              Text(
+                heroDay,
+                style: LsType.displayHome.copyWith(
+                  color: t.surface.text,
+                  fontSize: 64,
+                ),
+                maxLines: 2,
+              ),
+              const SizedBox(height: LsGap.loose),
+              // Right-aligned pill row of bold-number / regular-label stats.
+              _StatPillsRow(
+                items: [
+                  _StatPillData(value: durationStr, label: 'DURATION'),
+                  _StatPillData(value: '$setCount', label: 'SETS'),
+                  _StatPillData(
+                    value: WeightConv.format(totalVolumeKg, unit)
+                        .replaceAll(unit.short.toUpperCase(), '')
+                        .replaceAll(unit.short, '')
+                        .trim(),
+                    label: 'VOLUME ${unit.short.toUpperCase()}',
+                  ),
                 ],
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: LsGap.loose),
               if (trendPts.length >= 2) ...[
-                _TrendCard(points: trendPts, currentSessionId: sessionId, unit: unit),
-                const SizedBox(height: 16),
+                _TrendCard(
+                    points: trendPts,
+                    currentSessionId: sessionId,
+                    unit: unit),
+                const SizedBox(height: LsGap.section),
               ],
               for (final entry in byExercise.entries)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
+                  padding: const EdgeInsets.only(bottom: LsGap.sub),
                   child: _ExerciseCard(
                     name: d.exerciseNames[entry.key] ?? 'Exercise',
                     sets: entry.value,
@@ -144,51 +198,71 @@ class SummaryScreen extends ConsumerWidget {
                   ),
                 ),
             ],
-          );
-        },
-      ),
+          ),
+        );
+      },
     );
   }
 }
 
-class _StatRow extends StatelessWidget {
-  const _StatRow({required this.children});
-  final List<Widget> children;
+class _StatPillData {
+  const _StatPillData({required this.value, required this.label});
+  final String value;
+  final String label;
+}
+
+/// Right-aligned row of stat pills: each pill stacks a BOLD mono numeral on
+/// top of a regular monoMicro label. Used at the top of the summary screen.
+class _StatPillsRow extends StatelessWidget {
+  const _StatPillsRow({required this.items});
+  final List<_StatPillData> items;
   @override
   Widget build(BuildContext context) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        for (var i = 0; i < items.length; i++) ...[
+          if (i > 0) const SizedBox(width: LsGap.sub),
+          _StatPill(data: items[i]),
+        ],
+      ],
+    );
+  }
+}
+
+class _StatPill extends StatelessWidget {
+  const _StatPill({required this.data});
+  final _StatPillData data;
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
+        color: t.surface.surface,
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        border: Border.all(color: t.surface.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          for (final c in children) Expanded(child: c),
+          // Bold number (mono numeral) — large, w700.
+          Text(
+            data.value.toUpperCase(),
+            style: LsType.monoNumeral.copyWith(
+              color: t.surface.text,
+              fontSize: 28,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 2),
+          // Regular meta label.
+          Text(
+            data.label,
+            style: LsType.monoMicro.copyWith(color: t.surface.text2),
+          ),
         ],
       ),
-    );
-  }
-}
-
-class _Stat extends StatelessWidget {
-  const _Stat(this.label, this.value);
-  final String label;
-  final String value;
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(value,
-            style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 2),
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                color: AppColors.textSecondary,
-              ),
-        ),
-      ],
     );
   }
 }
@@ -205,6 +279,7 @@ class _TrendCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final spots = <FlSpot>[
       for (var i = 0; i < points.length; i++)
         FlSpot(i.toDouble(), points[i].tonnageKg),
@@ -213,43 +288,30 @@ class _TrendCard extends StatelessWidget {
     final prev = points.length >= 2 ? points[points.length - 2] : null;
     final delta = prev == null ? null : last.tonnageKg - prev.tonnageKg;
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      padding: const EdgeInsets.all(16),
+    return LsCard(
+      padding: LsPad.cardSpacious,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Expanded(
-                child: Text(
-                  'Volume trend',
-                  style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                ),
-              ),
+              const Expanded(child: EyebrowLabel('VOLUME TREND')),
               if (delta != null)
                 Text(
-                  '${delta >= 0 ? '+' : ''}${WeightConv.format(delta, unit)}',
-                  style: TextStyle(
-                    color: delta >= 0 ? AppColors.success : AppColors.danger,
-                    fontWeight: FontWeight.w600,
+                  '${delta >= 0 ? '+' : ''}'
+                  '${WeightConv.format(delta, unit).toUpperCase()}',
+                  style: LsType.monoMeta.copyWith(
+                    color: delta >= 0 ? t.accent.accent : LsSignals.danger,
                   ),
                 ),
             ],
           ),
           const SizedBox(height: 4),
           Text(
-            'last ${points.length} sessions',
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+            'LAST ${points.length} SESSIONS',
+            style: LsType.monoMicro.copyWith(color: t.surface.text3),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 12),
           SizedBox(
             height: 120,
             child: LineChart(
@@ -263,7 +325,7 @@ class _TrendCard extends StatelessWidget {
                     spots: spots,
                     isCurved: true,
                     barWidth: 2,
-                    color: AppColors.primary,
+                    color: t.accent.accent,
                     dotData: FlDotData(
                       show: true,
                       getDotPainter: (spot, _, _, _) {
@@ -271,15 +333,15 @@ class _TrendCard extends StatelessWidget {
                         return FlDotCirclePainter(
                           radius: isCurrent ? 4.5 : 2.5,
                           color: isCurrent
-                              ? AppColors.primary
-                              : AppColors.textSecondary,
+                              ? t.accent.accent
+                              : t.surface.text3,
                           strokeWidth: 0,
                         );
                       },
                     ),
                     belowBarData: BarAreaData(
                       show: true,
-                      color: AppColors.primary.withValues(alpha: 0.10),
+                      color: t.accent.accent.withValues(alpha: 0.16),
                     ),
                   ),
                 ],
@@ -310,6 +372,7 @@ class _ExerciseCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final topWeight =
         sets.fold<double>(0, (m, s) => s.weightKg > m ? s.weightKg : m);
     final topRepsAtTop = sets
@@ -318,93 +381,96 @@ class _ExerciseCard extends StatelessWidget {
 
     final prevTopWeight = prevSets == null || prevSets!.isEmpty
         ? null
-        : prevSets!.fold<double>(
-            0, (m, s) => s.weightKg > m ? s.weightKg : m);
-    final prevTopReps = prevSets == null || prevSets!.isEmpty || prevTopWeight == null
-        ? null
         : prevSets!
-            .where((s) => s.weightKg >= prevTopWeight - 1e-6)
-            .fold<int>(0, (m, s) => s.reps > m ? s.reps : m);
+            .fold<double>(0, (m, s) => s.weightKg > m ? s.weightKg : m);
+    final prevTopReps =
+        prevSets == null || prevSets!.isEmpty || prevTopWeight == null
+            ? null
+            : prevSets!
+                .where((s) => s.weightKg >= prevTopWeight - 1e-6)
+                .fold<int>(0, (m, s) => s.reps > m ? s.reps : m);
 
     String comparisonLabel;
-    Color comparisonColor = AppColors.textSecondary;
+    Color comparisonColor = t.surface.text2;
     if (isFirstSession) {
-      comparisonLabel = 'No prior sessions of this day';
+      comparisonLabel = 'FIRST TIME ON THIS DAY';
     } else if (prevTopWeight == null) {
-      comparisonLabel = 'New on this day';
+      comparisonLabel = 'NEW ON THIS DAY';
     } else {
       final dWeight = topWeight - prevTopWeight;
       final dReps = (prevTopReps == null) ? 0 : topRepsAtTop - prevTopReps;
       if (dWeight.abs() < 1e-6 && dReps == 0) {
-        comparisonLabel = 'Matched last session';
+        comparisonLabel = 'MATCHED LAST';
       } else if (dWeight > 0 || (dWeight.abs() < 1e-6 && dReps > 0)) {
         final w = dWeight.abs() < 1e-6
-            ? '+$dReps reps'
-            : '+${WeightConv.format(dWeight, unit)}';
-        comparisonLabel = '$w vs last';
-        comparisonColor = AppColors.success;
+            ? '+$dReps REPS'
+            : '+${WeightConv.format(dWeight, unit).toUpperCase()}';
+        comparisonLabel = '$w VS LAST';
+        comparisonColor = t.accent.accent;
       } else {
         final w = dWeight.abs() < 1e-6
-            ? '$dReps reps'
-            : '${dWeight > 0 ? '+' : ''}${WeightConv.format(dWeight, unit)}';
-        comparisonLabel = '$w vs last';
-        comparisonColor = AppColors.danger;
+            ? '$dReps REPS'
+            : '${dWeight > 0 ? '+' : ''}'
+                '${WeightConv.format(dWeight, unit).toUpperCase()}';
+        comparisonLabel = '$w VS LAST';
+        comparisonColor = LsSignals.danger;
       }
     }
 
-    return Container(
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      padding: const EdgeInsets.all(16),
+    return LsCard(
+      padding: LsPad.cardSpacious,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
               Expanded(
-                child: Text(name,
-                    style: Theme.of(context).textTheme.headlineSmall),
+                child: Text(
+                  name.toUpperCase(),
+                  style: LsType.displayM.copyWith(
+                    color: t.surface.text,
+                    fontSize: 28,
+                  ),
+                ),
               ),
               if (pr != null && pr!.isPr) _PrBadge(pr: pr!),
             ],
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 8),
           Row(
             children: [
               Expanded(
                 child: Text(
-                  '${sets.length} sets · top ${WeightConv.format(topWeight, unit)} × $topRepsAtTop',
-                  style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
+                  '${sets.length} SETS · TOP '
+                  '${WeightConv.format(topWeight, unit).toUpperCase()} × $topRepsAtTop',
+                  style: LsType.monoMeta.copyWith(color: t.surface.text2),
                 ),
               ),
               Text(
                 comparisonLabel,
-                style: TextStyle(
-                  color: comparisonColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
+                style: LsType.monoMeta.copyWith(color: comparisonColor),
               ),
             ],
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           for (var i = 0; i < sets.length; i++)
             Padding(
-              padding: const EdgeInsets.symmetric(vertical: 2),
+              padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(
                 children: [
                   SizedBox(
-                      width: 48,
-                      child: Text('Set ${i + 1}',
-                          style: Theme.of(context).textTheme.bodyLarge)),
+                    width: 64,
+                    child: Text(
+                      'SET ${i + 1}',
+                      style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                    ),
+                  ),
                   Expanded(
                     child: Text(
-                      '${WeightConv.format(sets[i].weightKg, unit)}  ×  ${sets[i].reps}  ·  RIR ${sets[i].rir}',
-                      style: Theme.of(context).textTheme.bodyLarge,
+                      '${WeightConv.format(sets[i].weightKg, unit).toUpperCase()}  ×  '
+                      '${sets[i].reps}  ·  RIR ${sets[i].rir}',
+                      style: LsType.monoData
+                          .copyWith(color: t.surface.text, fontSize: 18),
                     ),
                   ),
                 ],
@@ -432,21 +498,17 @@ class _PrBadge extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
-        color: AppColors.success.withValues(alpha: 0.18),
-        borderRadius: BorderRadius.circular(6),
+        color: LsSignals.pr.withValues(alpha: 0.20),
+        borderRadius: BorderRadius.circular(LsRadius.r2),
+        border: Border.all(color: LsSignals.pr),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.star, size: 14, color: AppColors.success),
+          const Icon(Icons.star, size: 12, color: LsSignals.pr),
           const SizedBox(width: 4),
           Text(label,
-              style: const TextStyle(
-                color: AppColors.success,
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.5,
-              )),
+              style: LsType.monoMicro.copyWith(color: LsSignals.pr)),
         ],
       ),
     );

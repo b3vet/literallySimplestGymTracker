@@ -73,6 +73,41 @@ flutter:
   assets:
     - assets/data/exercises_seed.json
 
+  # Bundled type families. Every family is registered as discrete static
+  # weights — variable-font axes were unreliable with `FontVariation` on the
+  # bundled TTFs (Flutter would silently render at the file's default 400
+  # weight). With discrete entries, asking for `FontWeight.w700` picks the
+  # right physical Bold file and avoids any axis interpolation.
+  fonts:
+    - family: Antonio
+      fonts:
+        - asset: assets/fonts/Antonio-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Antonio-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Antonio-Bold.ttf
+          weight: 700
+    - family: IBMPlexSans
+      fonts:
+        - asset: assets/fonts/IBMPlexSans-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/IBMPlexSans-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/IBMPlexSans-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/IBMPlexSans-Bold.ttf
+          weight: 700
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/JetBrainsMono-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/JetBrainsMono-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/JetBrainsMono-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/JetBrainsMono-Bold.ttf
+          weight: 700
+
 # Launcher icons. Drop a 1024x1024 source at assets/icon/icon.png, then run:
 #   dart run flutter_launcher_icons
 flutter_launcher_icons:

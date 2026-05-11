@@ -8,8 +8,10 @@ import 'package:go_router/go_router.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
 import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 import '../application/active_workout_controller.dart';
 import '../application/rest_timer_controller.dart';
 import '../domain/active_session.dart';
@@ -47,8 +49,8 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
   Widget build(BuildContext context) {
     final async = ref.watch(activeSessionProvider);
     return async.when(
-      loading: () => const Scaffold(
-          body: Center(child: CircularProgressIndicator())),
+      loading: () =>
+          const Scaffold(body: Center(child: CircularProgressIndicator())),
       error: (e, _) => Scaffold(body: Center(child: Text('Error: $e'))),
       data: (session) {
         if (session == null) {
@@ -61,19 +63,26 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
   }
 
   Widget _buildScaffold(ActiveSession session) {
+    final t = LsTheme.of(context);
     final current = session.currentExercise;
     final elapsed = DateTime.now().difference(session.startedAt);
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
 
     return Scaffold(
-      backgroundColor: AppColors.bg,
+      backgroundColor: t.surface.bg,
       body: SafeArea(
         child: Column(
           children: [
-            _HeaderBar(
-              elapsed: elapsed,
-              onClose: () => _confirmExit(session),
-              onProgram: () => showProgramStatusSheet(context),
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: LsSpace.screen,
+                vertical: 10,
+              ),
+              child: _HeaderRow(
+                elapsed: elapsed,
+                onClose: () => _confirmExit(session),
+                onProgram: () => showProgramStatusSheet(context),
+              ),
             ),
             const RestTimerBanner(),
             Expanded(
@@ -88,152 +97,177 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
   }
 
   Widget _exerciseView(
-      ActiveSession session, PlannedExercise current, WeightUnit unit) {
+    ActiveSession session,
+    PlannedExercise current,
+    WeightUnit unit,
+  ) {
+    final t = LsTheme.of(context);
     final setsLoggedForCurrent = session.loggedSets
         .where((s) => s.exerciseId == current.exerciseId)
         .toList();
     final allTargetsHit = setsLoggedForCurrent.length >= current.targetSets;
     final canPrev = session.cursor.exerciseIdx > 0;
     final canNext = session.cursor.exerciseIdx < session.queue.length - 1;
-    final completedCount = _completedCount(session);
 
-    return Column(
-      children: [
-        // Hero block — exercise index + name
-        Padding(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    (session.cursor.exerciseIdx + 1)
-                        .toString()
-                        .padLeft(2, '0'),
-                    style: AppDisplay.megaNumber.copyWith(
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Text(
-                      '/ ${session.queue.length.toString().padLeft(2, '0')}',
-                      style: AppDisplay.stat.copyWith(
-                        color: AppColors.textMuted,
-                      ),
-                    ),
-                  ),
-                  const Spacer(),
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 10),
-                    child: Text(
-                      '$completedCount DONE',
-                      style: AppDisplay.eyebrow,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              const EyebrowLabel('Current lift'),
-              const SizedBox(height: 8),
-              Text(
-                current.exerciseName.toUpperCase(),
-                style: AppDisplay.hero,
-                maxLines: 3,
-                overflow: TextOverflow.ellipsis,
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  _MetaPill(label: '${current.targetSets} SETS'),
-                  const SizedBox(width: 8),
-                  _MetaPill(
-                    label: current.targetRepsMin == current.targetRepsMax
-                        ? '${current.targetRepsMin} REPS'
-                        : '${current.targetRepsMin}–${current.targetRepsMax} REPS',
-                  ),
-                  const SizedBox(width: 8),
-                  _MetaPill(
-                    label: WeightConv.format(current.defaultWeightKg, unit)
-                        .toUpperCase(),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 4),
-        _ExerciseDots(session: session),
-        const SizedBox(height: 12),
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: 20),
-          child: TickerDivider(),
-        ),
-        const SizedBox(height: 8),
-        Expanded(
-          child: ListView.separated(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 16),
-            itemCount: current.targetSets,
-            separatorBuilder: (_, _) => const SizedBox(height: 8),
-            itemBuilder: (context, i) {
-              final set = i < setsLoggedForCurrent.length
-                  ? setsLoggedForCurrent[i]
-                  : null;
-              return _LoggedSetRow(
-                index: i + 1,
-                set: set,
-                unit: unit,
-                isNext: set == null && i == setsLoggedForCurrent.length,
-                onEdit: set == null ? null : () => _editSet(current, set, i),
-              );
-            },
-          ),
-        ),
-        _NavigatorBar(canPrev: canPrev, canNext: canNext, ref: ref),
-        _BottomBar(
-          primaryLabel: allTargetsHit ? 'NEXT EXERCISE →' : 'LOG SET',
-          onPrimary: allTargetsHit
-              ? () => ref.read(activeSessionProvider.notifier).goNext()
-              : () => _openSetLogSheet(current, setsLoggedForCurrent.length),
-          secondaryLabel: 'Finish exercise',
-          onSecondary: setsLoggedForCurrent.isEmpty || allTargetsHit
-              ? null
-              : () => ref.read(activeSessionProvider.notifier).goNext(),
-        ),
-      ],
-    );
-  }
-
-  Widget _finishedPlaceholder(ActiveSession session) {
+    // Layout: the LOG SET CTA + sub-footer stay pinned at the bottom (they're
+    // action controls, not content). Everything above scrolls as one block in
+    // a SingleChildScrollView so the entire screen — eyebrow, name, pills,
+    // chip row, set log rows — moves together when content overflows.
     return Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.symmetric(horizontal: LsSpace.screen),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Spacer(),
-          const Center(
-            child: Icon(Icons.check_circle, size: 88, color: AppColors.success),
+          Expanded(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.only(bottom: LsGap.sub),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Eyebrow row — current lift left, exercise index right.
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      const EyebrowLabel('CURRENT LIFT'),
+                      const Spacer(),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'EXERCISE',
+                            style: LsType.monoMicro.copyWith(
+                              color: t.surface.text3,
+                            ),
+                          ),
+                          const SizedBox(height: 6),
+                          Row(
+                            children: [
+                              Text(
+                                (session.cursor.exerciseIdx + 1)
+                                    .toString()
+                                    .padLeft(2, '0'),
+                                style: LsType.displayM.copyWith(
+                                  color: t.accent.accent,
+                                  fontSize: 26,
+                                ),
+                              ),
+                              Text(
+                                '/${session.queue.length.toString().padLeft(2, '0')}',
+                                style: LsType.monoMeta.copyWith(
+                                  color: t.surface.text2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: LsGap.sub),
+                  // Big exercise name.
+                  Text(
+                    current.exerciseName.toUpperCase(),
+                    style: LsType.displayXL.copyWith(
+                      color: t.surface.text,
+                      fontSize: 62,
+                      height: 0.9,
+                    ),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  const SizedBox(height: LsGap.section),
+                  // Meta pills row — bold numbers, regular label.
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 10,
+                    children: [
+                      MetaPill(
+                        value: '${current.targetSets}',
+                        text: 'SETS',
+                      ),
+                      MetaPill(
+                        value: current.targetRepsMin == current.targetRepsMax
+                            ? '${current.targetRepsMin}'
+                            : '${current.targetRepsMin}-${current.targetRepsMax}',
+                        text: 'REPS',
+                      ),
+                      MetaPill(
+                        value: _formatWeightNumber(
+                          current.defaultWeightKg,
+                          unit,
+                        ),
+                        text: unit.short,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: LsGap.loose),
+                  // Set chips row — horizontally scrollable when the count
+                  // outruns the available width.
+                  _SetChipsRow(
+                    count: current.targetSets,
+                    done: setsLoggedForCurrent.length,
+                  ),
+                  const SizedBox(height: LsGap.section),
+                  // Set log rows — Column (not ListView) so they participate
+                  // in the page-level scroll above.
+                  for (var i = 0; i < current.targetSets; i++) ...[
+                    if (i > 0) const SizedBox(height: LsGap.sub),
+                    Builder(builder: (_) {
+                      final set = i < setsLoggedForCurrent.length
+                          ? setsLoggedForCurrent[i]
+                          : null;
+                      final isNext = set == null &&
+                          i == setsLoggedForCurrent.length;
+                      return _SetRow(
+                        index: i + 1,
+                        set: set,
+                        unit: unit,
+                        isNext: isNext,
+                        onEdit: set == null
+                            ? null
+                            : () => _editSet(current, set, i),
+                      );
+                    }),
+                  ],
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 24),
-          Text('ALL DONE.',
-              textAlign: TextAlign.center,
-              style: AppDisplay.hero.copyWith(color: AppColors.success)),
-          const SizedBox(height: 8),
-          Text(
-            'Tap below to save the session.',
-            textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+          const SizedBox(height: LsGap.sub),
+          LsButton(
+            label: allTargetsHit ? 'NEXT EXERCISE →' : 'LOG SET',
+            onPressed: allTargetsHit
+                ? () => ref.read(activeSessionProvider.notifier).goNext()
+                : () => _openSetLogSheet(current, setsLoggedForCurrent.length),
+            expand: true,
+            minHeight: LsBox.cta,
           ),
-          const Spacer(),
-          FilledButton(
-            onPressed: () => _finish(session),
-            child: const Text('FINISH WORKOUT'),
+          const SizedBox(height: 12),
+          LsSubFooter(
+            items: [
+              LsSubFooterItem(
+                label: '← PREV',
+                onTap: canPrev
+                    ? () => ref.read(activeSessionProvider.notifier).goPrev()
+                    : null,
+              ),
+              // Surface the partial-finish / discard action sheet — `_confirmExit`
+              // already handles both branches (Finish now → save + go to
+              // summary; Discard → abandon + go home). The same flow is
+              // triggered by the close-X up top, but having an explicit
+              // FINISH WORKOUT here is the affordance the user expects.
+              LsSubFooterItem(
+                label: 'FINISH WORKOUT',
+                onTap: () => _confirmExit(session),
+                accent: true,
+              ),
+              LsSubFooterItem(
+                label: 'NEXT →',
+                onTap: canNext
+                    ? () => ref.read(activeSessionProvider.notifier).goNext()
+                    : null,
+              ),
+            ],
           ),
           const SizedBox(height: 12),
         ],
@@ -241,8 +275,67 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     );
   }
 
+  String _formatWeightNumber(double kg, WeightUnit unit) {
+    final value = WeightConv.fromKg(kg, unit);
+    return value == value.roundToDouble()
+        ? value.toStringAsFixed(0)
+        : value.toStringAsFixed(1);
+  }
+
+  Widget _finishedPlaceholder(ActiveSession session) {
+    final t = LsTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: LsSpace.screen),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Spacer(),
+          Center(
+            child: Container(
+              width: 88,
+              height: 88,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: t.accent.accentDim,
+                borderRadius: BorderRadius.circular(LsRadius.r3),
+                border: Border.all(color: t.accent.accent),
+              ),
+              child: Icon(Icons.check, size: 44, color: t.accent.accent),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'ALL DONE.',
+            textAlign: TextAlign.center,
+            style: LsType.displayXL.copyWith(
+              color: t.surface.text,
+              fontSize: 56,
+              height: 0.9,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'Tap below to save the session.',
+            textAlign: TextAlign.center,
+            style: LsType.bodyM.copyWith(color: t.surface.text2),
+          ),
+          const Spacer(),
+          LsButton(
+            label: 'FINISH WORKOUT',
+            onPressed: () => _finish(session),
+            expand: true,
+            minHeight: LsBox.cta,
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
+
   Future<void> _openSetLogSheet(
-      PlannedExercise current, int setsAlreadyLogged) async {
+    PlannedExercise current,
+    int setsAlreadyLogged,
+  ) async {
     final lastWeight = await ref
         .read(workoutDaoProvider)
         .lastSetForExercise(current.exerciseId);
@@ -256,11 +349,9 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
       initialRir: 0,
     );
     if (result == null) return;
-    await ref.read(activeSessionProvider.notifier).logSet(
-          reps: result.reps,
-          weightKg: result.weightKg,
-          rir: result.rir,
-        );
+    await ref
+        .read(activeSessionProvider.notifier)
+        .logSet(reps: result.reps, weightKg: result.weightKg, rir: result.rir);
     final restSeconds = ref.read(settingsProvider).restSeconds;
     if (restSeconds > 0) {
       ref.read(restTimerProvider.notifier).start(restSeconds);
@@ -268,7 +359,10 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
   }
 
   Future<void> _editSet(
-      PlannedExercise current, WorkoutSet existing, int setIdxInExercise) async {
+    PlannedExercise current,
+    WorkoutSet existing,
+    int setIdxInExercise,
+  ) async {
     final result = await showSetLogSheet(
       context,
       exercise: current,
@@ -278,7 +372,9 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
       initialRir: existing.rir,
     );
     if (result == null) return;
-    await ref.read(activeSessionProvider.notifier).editSet(
+    await ref
+        .read(activeSessionProvider.notifier)
+        .editSet(
           existing.copyWith(
             reps: result.reps,
             weightKg: result.weightKg,
@@ -332,19 +428,8 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
   }
 }
 
-int _completedCount(ActiveSession s) {
-  var n = 0;
-  for (var i = 0; i < s.queue.length; i++) {
-    final logged = s.loggedSets
-        .where((x) => x.exerciseId == s.queue[i].exerciseId)
-        .length;
-    if (logged >= s.queue[i].targetSets) n++;
-  }
-  return n;
-}
-
-class _HeaderBar extends StatelessWidget {
-  const _HeaderBar({
+class _HeaderRow extends StatelessWidget {
+  const _HeaderRow({
     required this.elapsed,
     required this.onClose,
     required this.onProgram,
@@ -355,33 +440,36 @@ class _HeaderBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-      child: Row(
-        children: [
-          IconButton(
-            icon: const Icon(Icons.close, color: AppColors.textSecondary),
-            onPressed: onClose,
-            tooltip: 'Exit',
-          ),
-          const Spacer(),
-          Column(
-            children: [
-              Text(_fmt(elapsed), style: AppDisplay.stat),
-              Text('ELAPSED',
-                  style: AppDisplay.eyebrow
-                      .copyWith(color: AppColors.textMuted, fontSize: 9)),
-            ],
-          ),
-          const Spacer(),
-          IconButton(
-            icon: const Icon(Icons.format_list_bulleted,
-                color: AppColors.textSecondary),
-            onPressed: onProgram,
-            tooltip: 'Program',
-          ),
-        ],
-      ),
+    final t = LsTheme.of(context);
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        LsIconSquare(icon: Icons.close, onTap: onClose, semanticLabel: 'Exit'),
+        const Spacer(),
+        Column(
+          children: [
+            Text(
+              _fmt(elapsed),
+              style: LsType.displayXL.copyWith(
+                color: t.surface.text,
+                fontSize: 56,
+                height: 1.0,
+              ),
+            ),
+            const SizedBox(height: LsGap.tight),
+            Text(
+              'ELAPSED',
+              style: LsType.monoMeta.copyWith(color: t.surface.text2),
+            ),
+          ],
+        ),
+        const Spacer(),
+        LsIconSquare(
+          icon: Icons.list,
+          onTap: onProgram,
+          semanticLabel: 'Program',
+        ),
+      ],
     );
   }
 
@@ -393,219 +481,41 @@ class _HeaderBar extends StatelessWidget {
   }
 }
 
-class _MetaPill extends StatelessWidget {
-  const _MetaPill({required this.label});
-  final String label;
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: AppColors.elevated,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(color: AppColors.divider),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
-          letterSpacing: 1.2,
-          color: AppColors.textPrimary,
-        ),
-      ),
-    );
-  }
-}
-
-class _NavigatorBar extends StatelessWidget {
-  const _NavigatorBar({
-    required this.canPrev,
-    required this.canNext,
-    required this.ref,
-  });
-  final bool canPrev;
-  final bool canNext;
-  final WidgetRef ref;
+/// Horizontal row of set chips for the current exercise.
+class _SetChipsRow extends StatelessWidget {
+  const _SetChipsRow({required this.count, required this.done});
+  final int count;
+  final int done;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+    // Single horizontal line that scrolls when the chips overflow the screen
+    // width. The previous Wrap would push the page taller every time it spilled
+    // to a new row — keeping it on one line means the chip row's vertical
+    // footprint is constant no matter the target-set count.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      padding: EdgeInsets.zero,
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          _NavBtn(
-            label: '← PREV',
-            enabled: canPrev,
-            onTap: () =>
-                ref.read(activeSessionProvider.notifier).goPrev(),
-          ),
-          const SizedBox(width: 12),
-          _NavBtn(
-            label: 'NEXT →',
-            enabled: canNext,
-            onTap: () =>
-                ref.read(activeSessionProvider.notifier).goNext(),
-          ),
+          for (var i = 0; i < count; i++) ...[
+            if (i > 0) const SizedBox(width: 10),
+            SetChip(
+              index: i + 1,
+              state: i < done
+                  ? SetChipState.current
+                  : (i == done ? SetChipState.current : SetChipState.pending),
+            ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _NavBtn extends StatelessWidget {
-  const _NavBtn({
-    required this.label,
-    required this.enabled,
-    required this.onTap,
-  });
-  final String label;
-  final bool enabled;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Material(
-        color: enabled ? AppColors.surface : AppColors.surface.withValues(alpha: 0.5),
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(10),
-          onTap: enabled ? onTap : null,
-          child: Container(
-            height: 42,
-            alignment: Alignment.center,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: AppColors.divider),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                color: enabled ? AppColors.textPrimary : AppColors.textMuted,
-                fontWeight: FontWeight.w800,
-                letterSpacing: 1.4,
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _NoActiveWorkoutScaffold extends StatelessWidget {
-  const _NoActiveWorkoutScaffold();
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('NO WORKOUT IN PROGRESS', style: AppDisplay.eyebrow),
-              const SizedBox(height: 12),
-              Text(
-                'Start one from the home screen.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-              ),
-              const SizedBox(height: 24),
-              FilledButton(
-                onPressed: () => context.go('/'),
-                child: const Text('HOME'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ExerciseDots extends ConsumerWidget {
-  const _ExerciseDots({required this.session});
-  final ActiveSession session;
-
-  @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    return SizedBox(
-      height: 36,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 20),
-        itemCount: session.queue.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 6),
-        itemBuilder: (context, i) {
-          final pe = session.queue[i];
-          final logged = session.loggedSets
-              .where((s) => s.exerciseId == pe.exerciseId)
-              .length;
-          final isCurrent = i == session.cursor.exerciseIdx;
-          final isDone = logged >= pe.targetSets;
-          final isSkipped = !isDone && i < session.cursor.exerciseIdx;
-
-          final Color fill;
-          final Color border;
-          final Color text;
-          if (isDone) {
-            fill = AppColors.success.withValues(alpha: 0.15);
-            border = AppColors.success;
-            text = AppColors.success;
-          } else if (isCurrent) {
-            fill = AppColors.primary;
-            border = AppColors.primary;
-            text = Colors.white;
-          } else if (isSkipped) {
-            fill = Colors.transparent;
-            border = AppColors.divider;
-            text = AppColors.textMuted;
-          } else {
-            fill = Colors.transparent;
-            border = AppColors.divider;
-            text = AppColors.textSecondary;
-          }
-
-          return InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => ref
-                .read(activeSessionProvider.notifier)
-                .goToExerciseIndex(i),
-            child: Container(
-              width: 36,
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: fill,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: border, width: 1.5),
-              ),
-              child: Text(
-                (i + 1).toString().padLeft(2, '0'),
-                style: TextStyle(
-                  color: text,
-                  fontWeight: FontWeight.w800,
-                  fontSize: 12,
-                  letterSpacing: 0.5,
-                  decoration:
-                      isSkipped ? TextDecoration.lineThrough : null,
-                ),
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _LoggedSetRow extends StatelessWidget {
-  const _LoggedSetRow({
+class _SetRow extends StatelessWidget {
+  const _SetRow({
     required this.index,
     required this.set,
     required this.unit,
@@ -620,61 +530,86 @@ class _LoggedSetRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final logged = set != null;
-    final accentColor = logged
-        ? AppColors.primary
-        : (isNext ? AppColors.primary.withValues(alpha: 0.5) : AppColors.divider);
-    final bg = logged ? AppColors.surface : AppColors.surface.withValues(alpha: 0.5);
+    final accent = logged
+        ? t.accent.accent
+        : (isNext ? t.accent.accent : t.surface.border);
     return Material(
-      color: bg,
-      borderRadius: BorderRadius.circular(10),
+      color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(LsRadius.r3),
         onTap: onEdit,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: accentColor, width: 1),
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: accent, width: 1.0),
           ),
+          foregroundDecoration: !logged && !isNext
+              ? _DashedDecoration(color: t.surface.border)
+              : null,
           child: Row(
             children: [
-              Text(
-                'SET ${index.toString().padLeft(2, '0')}',
-                style: AppDisplay.mono.copyWith(
-                  color: logged ? AppColors.textSecondary : AppColors.textMuted,
+              SizedBox(
+                width: 72,
+                child: Text(
+                  'SET ${index.toString().padLeft(2, '0')}',
+                  style: LsType.monoMeta.copyWith(
+                    color: t.surface.text2,
+                    fontSize: 14,
+                  ),
                 ),
               ),
-              const SizedBox(width: 14),
               Expanded(
                 child: logged
-                    ? Row(
+                    ? Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
                         children: [
                           Text(
-                            WeightConv.format(set!.weightKg, unit),
-                            style: AppDisplay.stat,
+                            WeightConv.format(
+                              set!.weightKg,
+                              unit,
+                            ).toUpperCase(),
+                            style: LsType.monoData.copyWith(
+                              color: t.accent.accent,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          Text('  ×  ',
-                              style: TextStyle(color: AppColors.textMuted)),
+                          Text(
+                            '  ×  ',
+                            style: LsType.monoMeta.copyWith(
+                              color: t.surface.text2,
+                            ),
+                          ),
                           Text(
                             '${set!.reps}',
-                            style: AppDisplay.stat,
+                            style: LsType.monoData.copyWith(
+                              color: t.surface.text,
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
-                          const SizedBox(width: 12),
+                          const SizedBox(width: 14),
                           Text(
-                            'RIR ${set!.rir}',
-                            style: AppDisplay.mono,
+                            '· RIR ${set!.rir}',
+                            style: LsType.monoMeta.copyWith(
+                              color: t.surface.text2,
+                            ),
                           ),
                         ],
                       )
                     : Text(
-                        isNext ? 'TAP "LOG SET" TO ENTER' : '—  pending',
-                        style: AppDisplay.mono,
+                        isNext ? 'TAP "LOG SET" TO ENTER' : '— PENDING',
+                        style: LsType.monoMeta.copyWith(
+                          color: isNext ? t.accent.accent : t.surface.text3,
+                          fontSize: 16,
+                        ),
                       ),
               ),
               if (logged)
-                const Icon(Icons.edit_outlined,
-                    size: 16, color: AppColors.textMuted),
+                Icon(Icons.edit_outlined, size: 16, color: t.surface.text3),
             ],
           ),
         ),
@@ -683,47 +618,79 @@ class _LoggedSetRow extends StatelessWidget {
   }
 }
 
-class _BottomBar extends StatelessWidget {
-  const _BottomBar({
-    required this.primaryLabel,
-    required this.onPrimary,
-    this.secondaryLabel,
-    this.onSecondary,
-  });
-  final String primaryLabel;
-  final VoidCallback onPrimary;
-  final String? secondaryLabel;
-  final VoidCallback? onSecondary;
+/// Painter that draws a dashed border around the box (foregroundDecoration).
+class _DashedDecoration extends Decoration {
+  const _DashedDecoration({required this.color});
+  final Color color;
+  @override
+  BoxPainter createBoxPainter([VoidCallback? onChanged]) =>
+      _DashedBoxPainter(color);
+}
 
+class _DashedBoxPainter extends BoxPainter {
+  _DashedBoxPainter(this.color);
+  final Color color;
+  @override
+  void paint(Canvas canvas, Offset offset, ImageConfiguration configuration) {
+    final size = configuration.size!;
+    final rect = Rect.fromLTWH(offset.dx, offset.dy, size.width, size.height);
+    final paint = Paint()
+      ..color = color
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    const dashWidth = 4.0;
+    const dashSpace = 4.0;
+    final radius = const Radius.circular(LsRadius.r3);
+    final path = Path()..addRRect(RRect.fromRectAndRadius(rect, radius));
+    final dashed = _dashPath(path, dashWidth: dashWidth, dashSpace: dashSpace);
+    canvas.drawPath(dashed, paint);
+  }
+
+  static Path _dashPath(
+    Path source, {
+    required double dashWidth,
+    required double dashSpace,
+  }) {
+    final dest = Path();
+    for (final metric in source.computeMetrics()) {
+      double dist = 0;
+      while (dist < metric.length) {
+        final next = (dist + dashWidth).clamp(0, metric.length).toDouble();
+        dest.addPath(metric.extractPath(dist, next), Offset.zero);
+        dist = next + dashSpace;
+      }
+    }
+    return dest;
+  }
+}
+
+class _NoActiveWorkoutScaffold extends StatelessWidget {
+  const _NoActiveWorkoutScaffold();
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-      decoration: const BoxDecoration(
-        color: AppColors.bg,
-        border: Border(top: BorderSide(color: AppColors.divider)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            SizedBox(
-              height: 64,
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: onPrimary,
-                child: Text(primaryLabel),
+    final t = LsTheme.of(context);
+    return LsScreen(
+      topbar: const LsTopbar(title: 'Workout'),
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'NO WORKOUT IN PROGRESS',
+                style: LsType.displayM.copyWith(color: t.surface.text),
               ),
-            ),
-            if (secondaryLabel != null && onSecondary != null) ...[
-              const SizedBox(height: 8),
-              TextButton(
-                onPressed: onSecondary,
-                child: Text(secondaryLabel!.toUpperCase()),
+              const SizedBox(height: 12),
+              Text(
+                'Start one from the home screen.',
+                textAlign: TextAlign.center,
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
               ),
+              const SizedBox(height: 24),
+              LsButton(label: 'HOME', onPressed: () => context.go('/')),
             ],
-          ],
+          ),
         ),
       ),
     );

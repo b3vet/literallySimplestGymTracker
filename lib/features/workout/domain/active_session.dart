@@ -10,6 +10,7 @@ class PlannedExercise {
     required this.targetRepsMin,
     required this.targetRepsMax,
     required this.defaultWeightKg,
+    this.weightStepKg,
   });
   final String programExerciseId;
   final String exerciseId;
@@ -19,6 +20,10 @@ class PlannedExercise {
   final int targetRepsMax;
   final double defaultWeightKg;
 
+  /// Per-exercise weight step in **kg**. NULL → caller falls back to the
+  /// unit's default step.
+  final double? weightStepKg;
+
   factory PlannedExercise.fromView(ProgramExerciseView v) => PlannedExercise(
         programExerciseId: v.pe.id,
         exerciseId: v.pe.exerciseId,
@@ -27,6 +32,7 @@ class PlannedExercise {
         targetRepsMin: v.pe.targetRepsMin,
         targetRepsMax: v.pe.targetRepsMax,
         defaultWeightKg: v.pe.defaultWeightKg,
+        weightStepKg: v.pe.weightStepKg,
       );
 }
 

@@ -88,10 +88,17 @@ private struct WorkoutVM {
 }
 
 // MARK: - Theme tokens
-
-private let brandOrange = Color(red: 1.0, green: 0.353, blue: 0.122)
-private let brandBg     = Color(red: 0.055, green: 0.059, blue: 0.071)
-private let brandSurface = Color(red: 0.102, green: 0.110, blue: 0.129)
+//
+// These match the Dart-side `lsDark` surface + the default "Red" accent
+// (LsAccent.red). The user can pick a different accent in-app, but the iOS
+// Widget Extension can't observe Dart-runtime settings without an extra
+// bridge — we keep the lock-screen rendering in the default accent for
+// simplicity. The surface tokens are kept in sync with `lsDark` in
+// `lib/core/theme/app_theme.dart`.
+private let brandOrange  = Color(red: 1.0,   green: 0.302, blue: 0.180) // #FF4D2E
+private let brandBg      = Color(red: 0.039, green: 0.043, blue: 0.047) // #0A0B0C
+private let brandSurface = Color(red: 0.086, green: 0.094, blue: 0.110) // #16181C
+private let brandSurface2 = Color(red: 0.114, green: 0.125, blue: 0.145) // #1D2025
 
 // MARK: - Building blocks
 
@@ -122,11 +129,11 @@ private struct MetaPill: View {
     let label: String
     var body: some View {
         Text(label)
-            .font(.system(size: 10, weight: .heavy))
-            .tracking(1.0)
+            .font(.system(size: 12, weight: .heavy))
+            .tracking(1.2)
             .foregroundStyle(.primary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 6)
                     .fill(brandSurface)
@@ -138,50 +145,138 @@ private struct MetaPill: View {
     }
 }
 
+/// Tile dimensions used by both the lock-screen single-row strip and the
+/// Dynamic-Island compact row. Apple caps the lock-screen activity at 160pt
+/// total height, so wrapping the set strip to a second row overflows. The
+/// row stays at a fixed height; tiles flex-share the available width and
+/// each tile's *content* adapts via `ViewThatFits` to whatever width it
+/// ends up with.
+private enum SetTileMetrics {
+    static let height: CGFloat = 30
+    static let spacing: CGFloat = 4
+}
+
+private enum SetTileState {
+    case done(String)   // "80×8"
+    case current
+    case pending
+}
+
 private struct SetLogStrip: View {
     let vm: WorkoutVM
+
     var body: some View {
-        // Compact row: one tile per set up to targetSets. Logged sets show
-        // their `weight × reps` line; pending sets show a dot.
         let total = max(vm.targetSets, vm.setLines.count, 1)
-        HStack(spacing: 6) {
+        HStack(spacing: SetTileMetrics.spacing) {
             ForEach(0..<total, id: \.self) { i in
-                if i < vm.setLines.count {
-                    SetTile(text: vm.setLines[i], filled: true, current: false)
-                } else if i == vm.setLines.count {
-                    SetTile(text: "•••", filled: false, current: true)
-                } else {
-                    SetTile(text: "—", filled: false, current: false)
-                }
+                let state: SetTileState =
+                    i < vm.setLines.count ? .done(vm.setLines[i])
+                    : i == vm.setLines.count ? .current
+                    : .pending
+                SetTile(state: state)
             }
         }
+        .frame(height: SetTileMetrics.height)
     }
 }
 
+/// Adaptive set tile. Each tile gets an equal share of the row width via
+/// `.frame(maxWidth: .infinity)`. The content inside picks the *largest*
+/// representation that fits the allocated width using `ViewThatFits`:
+///   1. Full mono text ("80×8") when the tile is wide enough.
+///   2. A compact glyph (✓ for done, • for current, blank for pending) when
+///      it isn't.
+/// That way a 3-set workout shows weight × reps per tile and a 12-set
+/// workout shows a tidy row of progress markers — never overflowing.
 private struct SetTile: View {
-    let text: String
-    let filled: Bool
-    let current: Bool
+    let state: SetTileState
+
     var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .bold).monospacedDigit())
-            .lineLimit(1)
-            .minimumScaleFactor(0.7)
-            .foregroundStyle(filled ? .primary : (current ? brandOrange : .secondary))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 5)
-            .frame(maxWidth: .infinity)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(filled ? brandSurface : Color.clear)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(
-                                current ? brandOrange : .white.opacity(0.12),
-                                lineWidth: current ? 1.2 : 1
-                            )
-                    )
-            )
+        let fg: Color = {
+            switch state {
+            case .done:    return .primary
+            case .current: return brandOrange
+            case .pending: return .secondary
+            }
+        }()
+        let bg: Color = {
+            switch state {
+            case .done:    return brandSurface
+            default:       return .clear
+            }
+        }()
+        let borderColor: Color = {
+            switch state {
+            case .current: return brandOrange
+            default:       return .white.opacity(0.12)
+            }
+        }()
+        let borderWidth: CGFloat = {
+            switch state {
+            case .current: return 1.2
+            default:       return 1
+            }
+        }()
+
+        return ZStack {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(bg)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(borderColor, lineWidth: borderWidth)
+                )
+
+            ViewThatFits(in: .horizontal) {
+                // Widest: full "80×8" detail. Used when the row has few sets.
+                if case .done(let text) = state {
+                    Text(text)
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .lineLimit(1)
+                        .padding(.horizontal, 4)
+                }
+                // Medium: just the rep count digits ("8"), so even narrow
+                // tiles still convey detail.
+                if case .done(let text) = state {
+                    Text(repsOnly(text))
+                        .font(.system(size: 11, weight: .bold).monospacedDigit())
+                        .lineLimit(1)
+                        .padding(.horizontal, 2)
+                }
+                // Narrow fallback: state glyph only.
+                glyph
+            }
+            .foregroundStyle(fg)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: SetTileMetrics.height)
+    }
+
+    /// Extract the reps half of a "weight×reps" string. Used as a medium
+    /// representation when the tile is too narrow for the full text but
+    /// wide enough for a couple of digits.
+    private func repsOnly(_ text: String) -> String {
+        // Tolerate either the math sign "×" or a plain "x".
+        if let r = text.range(of: "×") ?? text.range(of: "x") {
+            return String(text[r.upperBound...])
+        }
+        return text
+    }
+
+    @ViewBuilder
+    private var glyph: some View {
+        switch state {
+        case .done:
+            Image(systemName: "checkmark")
+                .font(.system(size: 11, weight: .bold))
+        case .current:
+            Circle()
+                .fill(brandOrange)
+                .frame(width: 6, height: 6)
+        case .pending:
+            Circle()
+                .strokeBorder(.white.opacity(0.25), lineWidth: 1)
+                .frame(width: 6, height: 6)
+        }
     }
 }
 
@@ -190,16 +285,39 @@ private struct SetTile: View {
 private struct LockScreenView: View {
     let vm: WorkoutVM
 
+    /// Apple caps the lock-screen Live Activity at **160pt** total height.
+    /// Anything beyond that is clipped by the system. The previous attempt
+    /// reserved `minHeight: 184` which the OS silently truncated — and the
+    /// wrapping set grid overflowed for any workout with >5 sets.
+    ///
+    /// Budget breakdown (all in pt) inside 160pt:
+    ///
+    ///   vertical padding (top + bottom)          24   (12 + 12)
+    ///   header row (icon + label / rest pill)    22
+    ///   spacer                                    8
+    ///   hero name (single line, scaled)          30
+    ///   spacer                                    8
+    ///   meta pills + index                       24
+    ///   spacer                                   10
+    ///   set strip (single row, fixed height)     30
+    ///   ──────────────────────────────────────────
+    ///   total                                   156   ✓ fits
+    ///
+    /// The set strip stays on ONE line; per-tile content shrinks
+    /// (full text → reps-only → glyph) as the count grows, via
+    /// `ViewThatFits` inside `SetTile`.
+    private static let totalHeight: CGFloat = 160
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
             // Top row: set label + rest countdown.
             HStack(alignment: .center) {
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Image(systemName: "dumbbell.fill")
-                        .font(.caption.weight(.bold))
+                        .font(.subheadline.weight(.bold))
                         .foregroundStyle(brandOrange)
                     Text(vm.setLabel.uppercased())
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(.system(size: 13, weight: .heavy))
                         .tracking(1.4)
                         .foregroundStyle(.secondary)
                 }
@@ -207,15 +325,20 @@ private struct LockScreenView: View {
                 RestPill(vm: vm)
             }
 
-            // Hero — exercise name.
-            Text(vm.exerciseName.uppercased())
-                .font(.system(size: 24, weight: .heavy))
-                .tracking(-0.4)
-                .lineLimit(2)
-                .minimumScaleFactor(0.6)
+            Spacer(minLength: 8)
 
-            // Meta pills row — target + last set.
-            HStack(spacing: 6) {
+            // Hero — exercise name. Force single-line so the row stays
+            // predictable inside the 160pt budget.
+            Text(vm.exerciseName.uppercased())
+                .font(.system(size: 26, weight: .heavy))
+                .tracking(-0.3)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+
+            Spacer(minLength: 8)
+
+            // Meta pills row — target + last set + exercise index.
+            HStack(spacing: 8) {
                 if !vm.repsLabel.isEmpty {
                     MetaPill(label: vm.repsLabel)
                 }
@@ -225,16 +348,25 @@ private struct LockScreenView: View {
                 Spacer()
                 if vm.totalExercises > 0 {
                     Text("\(vm.exerciseIndex)/\(vm.totalExercises)")
-                        .font(.system(size: 11, weight: .heavy)).tracking(1.2)
+                        .font(.system(size: 12, weight: .heavy)).tracking(1.2)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            // Set-log strip — one tile per set.
+            Spacer(minLength: 10)
+
+            // Set-log strip — ALWAYS single row. Each tile flexes to share
+            // the available width; tile content downgrades as it narrows.
             SetLogStrip(vm: vm)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: Self.totalHeight,
+            maxHeight: Self.totalHeight,
+            alignment: .topLeading
+        )
         .activityBackgroundTint(brandBg)
         .activitySystemActionForegroundColor(.white)
     }

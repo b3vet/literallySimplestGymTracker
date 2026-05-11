@@ -1,7 +1,13 @@
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
+import '../theme/spec.dart';
+import 'brand.dart';
+import 'layout.dart';
 
+/// Inline rename prompt — used by Programs/Days/Exercises long-press menu.
+/// Presents as a small modal sheet (matches screen 05 in the spec). The
+/// underline above "RENAME" is the EyebrowLabel stripe, never a literal `—`.
 Future<String?> promptName(
   BuildContext context, {
   required String title,
@@ -9,61 +15,103 @@ Future<String?> promptName(
   String hint = 'Name',
 }) {
   final controller = TextEditingController(text: initial);
-  return showDialog<String>(
+  return showModalBottomSheet<String>(
     context: context,
-    builder: (ctx) => AlertDialog(
-      backgroundColor: AppColors.surface,
-      title: Text(title),
-      content: TextField(
-        controller: controller,
-        autofocus: true,
-        textCapitalization: TextCapitalization.words,
-        decoration: InputDecoration(hintText: hint),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(ctx),
-          child: const Text('Cancel'),
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) {
+      final t = LsTheme.of(ctx);
+      return LsSheet(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            EyebrowLabel(title.toUpperCase()),
+            const SizedBox(height: LsGap.section),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              textCapitalization: TextCapitalization.words,
+              style: LsType.displayM.copyWith(
+                color: t.surface.text,
+                fontSize: 28,
+              ),
+              decoration: InputDecoration(
+                hintText: hint.toUpperCase(),
+                hintStyle: LsType.displayM.copyWith(
+                  color: t.surface.text3,
+                  fontSize: 28,
+                ),
+              ),
+            ),
+            const SizedBox(height: LsGap.loose),
+            Row(
+              children: [
+                Expanded(
+                  child: LsButton(
+                    label: 'Cancel',
+                    variant: LsButtonVariant.ghost,
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ),
+                const SizedBox(width: LsGap.inline),
+                Expanded(
+                  child: LsButton(
+                    label: 'Save',
+                    onPressed: () =>
+                        Navigator.pop(ctx, controller.text.trim()),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
-        FilledButton(
-          style: FilledButton.styleFrom(minimumSize: const Size(88, 44)),
-          onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-          child: const Text('Save'),
-        ),
-      ],
-    ),
+      );
+    },
   );
 }
 
-Future<bool?> confirmDelete(BuildContext context, String label) => showDialog(
+Future<bool?> confirmDelete(BuildContext context, String label) =>
+    showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        title: const Text('Delete?'),
-        content: Text('This will delete "$label" and everything inside it.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancel'),
+      builder: (ctx) {
+        final t = LsTheme.of(ctx);
+        return AlertDialog(
+          title: const Text('DELETE?'),
+          content: Text(
+            'This will delete "$label" and everything inside it.',
+            style: LsType.bodyM.copyWith(color: t.surface.text2),
           ),
-          FilledButton(
-            style: FilledButton.styleFrom(
-              backgroundColor: AppColors.danger,
-              minimumSize: const Size(88, 44),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: Text(
+                'CANCEL',
+                style: LsType.button.copyWith(color: t.surface.text2),
+              ),
             ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: LsSignals.danger,
+                foregroundColor: Colors.white,
+                minimumSize: const Size(88, 44),
+              ),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('DELETE'),
+            ),
+          ],
+        );
+      },
     );
 
-Widget dismissBackground() => Container(
-      alignment: Alignment.centerRight,
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      decoration: BoxDecoration(
-        color: AppColors.danger,
-        borderRadius: BorderRadius.circular(12),
+Widget dismissBackground() => Builder(
+      builder: (context) => Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        decoration: BoxDecoration(
+          color: LsSignals.danger,
+          borderRadius: BorderRadius.circular(LsRadius.r3),
+        ),
+        child: const Icon(Icons.delete_outline, color: Colors.white),
       ),
-      child: const Icon(Icons.delete_outline, color: Colors.white),
     );

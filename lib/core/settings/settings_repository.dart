@@ -1,7 +1,9 @@
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../main.dart' show sharedPreferencesProvider;
+import '../theme/app_theme.dart' show LsAccent;
 
 enum WeightUnit {
   kg,
@@ -21,23 +23,31 @@ class AppSettings {
     required this.weightStep,
     required this.restSeconds,
     required this.liveActivityEnabled,
+    required this.themeMode,
+    required this.accent,
   });
   final WeightUnit? unit; // null = not yet chosen
   final double weightStep;
   final int restSeconds;
   final bool liveActivityEnabled;
+  final ThemeMode themeMode;
+  final LsAccent accent;
 
   AppSettings copyWith({
     WeightUnit? unit,
     double? weightStep,
     int? restSeconds,
     bool? liveActivityEnabled,
+    ThemeMode? themeMode,
+    LsAccent? accent,
   }) =>
       AppSettings(
         unit: unit ?? this.unit,
         weightStep: weightStep ?? this.weightStep,
         restSeconds: restSeconds ?? this.restSeconds,
         liveActivityEnabled: liveActivityEnabled ?? this.liveActivityEnabled,
+        themeMode: themeMode ?? this.themeMode,
+        accent: accent ?? this.accent,
       );
 }
 
@@ -49,6 +59,8 @@ class SettingsRepository {
   static const _kWeightStep = 'settings.weight_step';
   static const _kRestSeconds = 'settings.rest_seconds';
   static const _kLiveActivity = 'settings.live_activity';
+  static const _kThemeMode = 'settings.theme_mode';
+  static const _kAccent = 'settings.accent';
   static const int defaultRestSeconds = 90;
 
   AppSettings read() {
@@ -62,11 +74,23 @@ class SettingsRepository {
         (unit?.defaultStep ?? WeightUnit.kg.defaultStep);
     final rest = _prefs.getInt(_kRestSeconds) ?? defaultRestSeconds;
     final liveActivity = _prefs.getBool(_kLiveActivity) ?? true;
+    final mode = switch (_prefs.getString(_kThemeMode)) {
+      'light' => ThemeMode.light,
+      'system' => ThemeMode.system,
+      _ => ThemeMode.dark, // default
+    };
+    final accentName = _prefs.getString(_kAccent);
+    final accent = LsAccent.values.firstWhere(
+      (a) => a.name == accentName,
+      orElse: () => LsAccent.red,
+    );
     return AppSettings(
       unit: unit,
       weightStep: step,
       restSeconds: rest,
       liveActivityEnabled: liveActivity,
+      themeMode: mode,
+      accent: accent,
     );
   }
 
@@ -84,6 +108,19 @@ class SettingsRepository {
 
   Future<void> writeLiveActivityEnabled(bool enabled) async {
     await _prefs.setBool(_kLiveActivity, enabled);
+  }
+
+  Future<void> writeThemeMode(ThemeMode mode) async {
+    final str = switch (mode) {
+      ThemeMode.light => 'light',
+      ThemeMode.dark => 'dark',
+      ThemeMode.system => 'system',
+    };
+    await _prefs.setString(_kThemeMode, str);
+  }
+
+  Future<void> writeAccent(LsAccent accent) async {
+    await _prefs.setString(_kAccent, accent.name);
   }
 }
 

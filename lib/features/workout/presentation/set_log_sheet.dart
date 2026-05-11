@@ -5,7 +5,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 import '../../../core/widgets/pickers/picker_column.dart';
 import '../domain/active_session.dart';
 
@@ -32,14 +35,16 @@ Future<SetLogResult?> showSetLogSheet(
   return showModalBottomSheet<SetLogResult>(
     context: context,
     isScrollControlled: true,
-    backgroundColor: AppColors.elevated,
-    builder: (ctx) => _SetLogSheet(
-      exercise: exercise,
-      setNumber: setNumber,
-      initialReps: initialReps,
-      initialWeightKg: initialWeightKg,
-      initialRir: initialRir,
-      titleOverride: titleOverride,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => LsSheet(
+      child: _SetLogSheet(
+        exercise: exercise,
+        setNumber: setNumber,
+        initialReps: initialReps,
+        initialWeightKg: initialWeightKg,
+        initialRir: initialRir,
+        titleOverride: titleOverride,
+      ),
     ),
   );
 }
@@ -69,15 +74,13 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
   static const int _repsMax = 50;
   static const int _rirMax = 10;
 
-  // Picker value range for weight lives in the user's unit.
   double _weightRangeMax(WeightUnit unit) =>
       unit == WeightUnit.kg ? 300.0 : 660.0;
 
   late int _reps;
   late int _rir;
-  // Weight picker state is indexed, driven by step.
-  late double _weightDisplay; // value in user's unit
-  late double _weightStep; // in user's unit
+  late double _weightDisplay;
+  late double _weightStep;
 
   final _repsCtrl = FixedExtentScrollController();
   final _weightCtrl = FixedExtentScrollController();
@@ -88,27 +91,37 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
     super.initState();
     final settings = ref.read(settingsProvider);
     final unit = settings.unit ?? WeightUnit.kg;
-
     final defaultReps =
         widget.initialReps ??
-            ((widget.exercise.targetRepsMin + widget.exercise.targetRepsMax) ~/ 2);
+        ((widget.exercise.targetRepsMin + widget.exercise.targetRepsMax) ~/ 2);
     _reps = defaultReps.clamp(_repsMin, _repsMax);
     _rir = widget.initialRir.clamp(0, _rirMax);
 
-    final defaultKg =
-        widget.initialWeightKg ?? widget.exercise.defaultWeightKg;
-    _weightStep = settings.weightStep > 0 ? settings.weightStep : unit.defaultStep;
-    // Snap default to nearest step.
+    final defaultKg = widget.initialWeightKg ?? widget.exercise.defaultWeightKg;
+    // Per-exercise step (kg) wins; otherwise fall back to the unit default.
+    final stepKg = widget.exercise.weightStepKg ?? WeightUnit.kg.defaultStep;
+    _weightStep = _stepInUnit(stepKg, unit);
     final raw = WeightConv.fromKg(defaultKg, unit);
     _weightDisplay = (raw / _weightStep).round() * _weightStep;
     _weightDisplay = _weightDisplay.clamp(0, _weightRangeMax(unit));
 
-    // Schedule jumpToItem after the first layout — these controllers need attachment.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _repsCtrl.jumpToItem(_reps - _repsMin);
       _rirCtrl.jumpToItem(_rir);
       _weightCtrl.jumpToItem((_weightDisplay / _weightStep).round());
     });
+  }
+
+  /// Convert a step stored in kg into the current display unit. Pounds use
+  /// 1/2.5/5 — fall back to whichever unit-default is closest if the user
+  /// originally configured a kg step but the display unit is lb.
+  double _stepInUnit(double stepKg, WeightUnit unit) {
+    if (unit == WeightUnit.kg) return stepKg;
+    // Convert kg → lb, snap to the nearest sane lb step.
+    final asLb = stepKg * 2.20462;
+    if (asLb <= 1.25) return 1.0;
+    if (asLb <= 3.75) return 2.5;
+    return 5.0;
   }
 
   @override
@@ -123,119 +136,100 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
   Widget build(BuildContext context) {
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
     final weightCount = (_weightRangeMax(unit) / _weightStep).round() + 1;
+    final t = LsTheme.of(context);
 
-    final title = widget.titleOverride.isNotEmpty
+    final eyebrow = widget.titleOverride.isNotEmpty
         ? widget.titleOverride
-        : '${widget.exercise.exerciseName} · Set ${widget.setNumber}';
+        : 'SET ${widget.setNumber}';
 
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+    final repsTarget =
+        widget.exercise.targetRepsMin == widget.exercise.targetRepsMax
+        ? '${widget.exercise.targetRepsMin}'
+        : '${widget.exercise.targetRepsMin}-${widget.exercise.targetRepsMax}';
+    final weightTarget = WeightConv.format(
+      widget.exercise.defaultWeightKg,
+      unit,
+    ).toUpperCase();
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: LsGap.sub),
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const SizedBox(height: 4),
-            Text(title,
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            SizedBox(
-              height: 240,
-              child: Row(
-                children: [
-                  Expanded(
-                    flex: 25,
-                    child: PickerColumn(
-                      label: 'REPS',
-                      controller: _repsCtrl,
-                      itemCount: _repsMax - _repsMin + 1,
-                      builder: (i) => PickerText('${i + _repsMin}'),
-                      onChanged: (i) {
-                        setState(() => _reps = i + _repsMin);
-                        HapticFeedback.selectionClick();
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    flex: 45,
-                    child: PickerColumn(
-                      label: 'WEIGHT (${unit.short})',
-                      controller: _weightCtrl,
-                      itemCount: weightCount,
-                      builder: (i) => PickerText(
-                        _formatWeightLabel(i * _weightStep, unit),
-                      ),
-                      onChanged: (i) {
-                        setState(() => _weightDisplay = i * _weightStep);
-                        HapticFeedback.selectionClick();
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    flex: 25,
-                    child: PickerColumn(
-                      label: 'RIR',
-                      controller: _rirCtrl,
-                      itemCount: _rirMax + 1,
-                      builder: (i) => PickerText('$i'),
-                      onChanged: (i) {
-                        setState(() => _rir = i);
-                        HapticFeedback.selectionClick();
-                      },
-                    ),
-                  ),
-                ],
-              ),
+            Expanded(child: EyebrowLabel(eyebrow.toUpperCase())),
+            Text(
+              '$repsTarget · $weightTarget',
+              style: LsType.monoMeta.copyWith(color: t.surface.text2),
             ),
-            const SizedBox(height: 8),
-            WeightStepToggle(
-              unit: unit,
-              current: _weightStep,
-              onChanged: (s) async {
-                final oldIdx = (_weightDisplay / _weightStep).round();
-                final oldValue = oldIdx * _weightStep;
-                setState(() {
-                  _weightStep = s;
-                  _weightDisplay =
-                      (oldValue / _weightStep).round() * _weightStep;
-                });
-                await ref.read(settingsProvider.notifier).setWeightStep(s);
-                WidgetsBinding.instance.addPostFrameCallback((_) {
-                  _weightCtrl.jumpToItem(
-                    (_weightDisplay / _weightStep).round(),
-                  );
-                });
-              },
-            ),
-            const SizedBox(height: 16),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 20),
-              child: SizedBox(
-                height: 64,
-                child: FilledButton(
-                  onPressed: _save,
-                  child: const Text('SAVE SET'),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
           ],
         ),
-      ),
+        const SizedBox(height: LsGap.tight),
+        const SizedBox(height: LsGap.section),
+        SizedBox(
+          height: 260,
+          child: Row(
+            children: [
+              Expanded(
+                flex: 25,
+                child: PickerColumn(
+                  label: 'REPS',
+                  controller: _repsCtrl,
+                  itemCount: _repsMax - _repsMin + 1,
+                  builder: (i, sel) =>
+                      PickerText('${i + _repsMin}', selected: sel),
+                  onChanged: (i) {
+                    setState(() => _reps = i + _repsMin);
+                  },
+                ),
+              ),
+              Expanded(
+                flex: 45,
+                child: PickerColumn(
+                  label: 'WEIGHT',
+                  unitSuffix: unit.short,
+                  controller: _weightCtrl,
+                  itemCount: weightCount,
+                  builder: (i, sel) => PickerText(
+                    _formatWeightLabel(i * _weightStep, unit),
+                    selected: sel,
+                  ),
+                  onChanged: (i) {
+                    setState(() => _weightDisplay = i * _weightStep);
+                  },
+                ),
+              ),
+              Expanded(
+                flex: 25,
+                child: PickerColumn(
+                  label: 'RIR',
+                  controller: _rirCtrl,
+                  itemCount: _rirMax + 1,
+                  builder: (i, sel) => PickerText('$i', selected: sel),
+                  onChanged: (i) {
+                    setState(() => _rir = i);
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: LsGap.loose),
+        LsButton(
+          label: 'SAVE SET',
+          onPressed: _save,
+          expand: true,
+          minHeight: LsBox.cta,
+        ),
+      ],
     );
   }
 
-  String _formatWeightLabel(double valueInUnit, WeightUnit unit) {
-    if (unit == WeightUnit.kg) {
-      return valueInUnit == valueInUnit.roundToDouble()
-          ? valueInUnit.toStringAsFixed(0)
-          : valueInUnit.toStringAsFixed(1);
-    }
-    return valueInUnit == valueInUnit.roundToDouble()
-        ? valueInUnit.toStringAsFixed(0)
-        : valueInUnit.toStringAsFixed(1);
+  String _formatWeightLabel(double v, WeightUnit unit) {
+    if (v == v.roundToDouble()) return v.toStringAsFixed(0);
+    return v.toStringAsFixed(1);
   }
 
   void _save() {
@@ -251,4 +245,3 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
     );
   }
 }
-

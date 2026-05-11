@@ -61,3 +61,8 @@ const schemaV1 = <String>[
   'CREATE INDEX idx_sets_exercise_time ON workout_sets(exercise_id, logged_at DESC)',
   'CREATE INDEX idx_sets_session       ON workout_sets(session_id)',
 ];
+
+/// v2: per-exercise weight step. NULL means "use the unit default".
+const schemaV2Up = <String>[
+  'ALTER TABLE program_exercises ADD COLUMN weight_step REAL',
+];

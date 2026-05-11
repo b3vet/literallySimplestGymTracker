@@ -1,5 +1,7 @@
+import 'package:flutter/material.dart' show ThemeMode;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../theme/app_theme.dart' show LsAccent;
 import 'settings_repository.dart';
 
 class SettingsNotifier extends Notifier<AppSettings> {
@@ -27,6 +29,16 @@ class SettingsNotifier extends Notifier<AppSettings> {
   Future<void> setLiveActivityEnabled(bool enabled) async {
     await ref.read(settingsRepositoryProvider).writeLiveActivityEnabled(enabled);
     state = state.copyWith(liveActivityEnabled: enabled);
+  }
+
+  Future<void> setThemeMode(ThemeMode mode) async {
+    await ref.read(settingsRepositoryProvider).writeThemeMode(mode);
+    state = state.copyWith(themeMode: mode);
+  }
+
+  Future<void> setAccent(LsAccent accent) async {
+    await ref.read(settingsRepositoryProvider).writeAccent(accent);
+    state = state.copyWith(accent: accent);
   }
 }
 

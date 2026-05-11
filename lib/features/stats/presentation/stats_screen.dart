@@ -6,23 +6,26 @@ import 'package:intl/intl.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 import '../../programs/domain/exercise.dart';
 import '../application/stats_provider.dart';
 
-enum StatsMetric { topWeight, volume, oneRm }
+enum StatsMetric { topSet, volume, est1rm }
 
 extension on StatsMetric {
   String get label => switch (this) {
-        StatsMetric.topWeight => 'Top set',
-        StatsMetric.volume => 'Volume',
-        StatsMetric.oneRm => 'Est 1RM',
-      };
+    StatsMetric.topSet => 'TOP SET',
+    StatsMetric.volume => 'VOLUME',
+    StatsMetric.est1rm => 'EST 1RM',
+  };
   double Function(ExerciseProgressionPoint) get accessor => switch (this) {
-        StatsMetric.topWeight => (p) => p.topWeightKg,
-        StatsMetric.volume => (p) => p.totalVolumeKg,
-        StatsMetric.oneRm => (p) => p.est1RMKg,
-      };
+    StatsMetric.topSet => (p) => p.topWeightKg,
+    StatsMetric.volume => (p) => p.totalVolumeKg,
+    StatsMetric.est1rm => (p) => p.est1RMKg,
+  };
 }
 
 class StatsScreen extends ConsumerStatefulWidget {
@@ -33,33 +36,56 @@ class StatsScreen extends ConsumerStatefulWidget {
 
 class _StatsScreenState extends ConsumerState<StatsScreen> {
   Exercise? _selected;
-  StatsMetric _metric = StatsMetric.topWeight;
+  StatsMetric _metric = StatsMetric.topSet;
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final exercises = ref.watch(loggedExercisesProvider);
-    return Scaffold(
-      appBar: AppBar(title: const Text('Stats')),
-      body: exercises.when(
+    return LsScreen(
+      topGap: LsGap.loose,
+      topbar: const LsTopbar(title: 'Stats'),
+      child: exercises.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (list) {
-          if (list.isEmpty) return const _Empty();
+          if (list.isEmpty) {
+            return Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'NO STATS YET',
+                      style: LsType.displayM.copyWith(color: t.surface.text),
+                    ),
+                    const SizedBox(height: 10),
+                    Text(
+                      'Log at least 2 sessions of an exercise to see progress.',
+                      textAlign: TextAlign.center,
+                      style: LsType.bodyM.copyWith(color: t.surface.text2),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }
           _selected ??= list.first;
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.zero,
             children: [
               _ExerciseSelector(
                 exercises: list,
                 selected: _selected!,
                 onSelect: (e) => setState(() => _selected = e),
               ),
-              const SizedBox(height: 16),
-              _MetricToggle(
+              const SizedBox(height: LsGap.section),
+              _MetricSegmented(
                 metric: _metric,
                 onChange: (m) => setState(() => _metric = m),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: LsGap.section),
               _ExerciseChartCard(exerciseId: _selected!.id, metric: _metric),
             ],
           );
@@ -81,81 +107,189 @@ class _ExerciseSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () async {
-          final picked = await showModalBottomSheet<Exercise>(
-            context: context,
-            backgroundColor: AppColors.elevated,
-            builder: (ctx) => SafeArea(
-              top: false,
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                shrinkWrap: true,
-                itemCount: exercises.length,
-                itemBuilder: (c, i) {
-                  final e = exercises[i];
-                  return ListTile(
-                    tileColor: AppColors.elevated,
-                    title: Text(e.name),
-                    trailing: e.id == selected.id
-                        ? const Icon(Icons.check, color: AppColors.primary)
-                        : null,
-                    onTap: () => Navigator.pop(ctx, e),
-                  );
-                },
-              ),
+    final t = LsTheme.of(context);
+    return LsCard(
+      padding: LsPad.cardSpacious,
+      onTap: () async {
+        final picked = await showModalBottomSheet<Exercise>(
+          context: context,
+          isScrollControlled: true,
+          backgroundColor: Colors.transparent,
+          builder: (ctx) => LsSheet(
+            child: _ChooseExerciseSheetBody(
+              exercises: exercises,
+              selectedId: selected.id,
             ),
-          );
-          if (picked != null) onSelect(picked);
-        },
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('EXERCISE',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                              color: AppColors.textSecondary,
-                            )),
-                    const SizedBox(height: 4),
-                    Text(selected.name,
-                        style: Theme.of(context).textTheme.headlineSmall),
-                  ],
-                ),
-              ),
-              const Icon(Icons.unfold_more, color: AppColors.textSecondary),
-            ],
           ),
-        ),
+        );
+        if (picked != null) onSelect(picked);
+      },
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const EyebrowLabel('EXERCISE'),
+                const SizedBox(height: LsGap.sub),
+                Text(
+                  selected.name.toUpperCase(),
+                  style: LsType.displayM.copyWith(
+                    color: t.surface.text,
+                    fontSize: 32,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          Icon(Icons.unfold_more, color: t.surface.text2, size: 22),
+        ],
       ),
     );
   }
 }
 
-class _MetricToggle extends StatelessWidget {
-  const _MetricToggle({required this.metric, required this.onChange});
+/// Custom "CHOOSE EXERCISE" bottom sheet — matches design screenshot 13:
+/// drag handle (provided by LsSheet), eyebrow header, hairline dividers
+/// between rows, Antonio display font for exercise names, accent checkmark
+/// on the selected row.
+class _ChooseExerciseSheetBody extends StatelessWidget {
+  const _ChooseExerciseSheetBody({
+    required this.exercises,
+    required this.selectedId,
+  });
+  final List<Exercise> exercises;
+  final String selectedId;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return ConstrainedBox(
+      constraints: BoxConstraints(
+        maxHeight: MediaQuery.of(context).size.height * 0.8,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Padding(
+            padding: EdgeInsets.only(bottom: LsGap.sub),
+            child: EyebrowLabel('CHOOSE EXERCISE'),
+          ),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: exercises.length,
+              separatorBuilder: (_, _) =>
+                  Container(height: 1, color: t.surface.border),
+              itemBuilder: (ctx, i) {
+                final e = exercises[i];
+                final isSelected = e.id == selectedId;
+                return InkWell(
+                  onTap: () => Navigator.pop(ctx, e),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 18),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            e.name.toUpperCase(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: LsType.displayM.copyWith(
+                              color: isSelected
+                                  ? t.surface.text
+                                  : t.surface.text2,
+                              fontSize: 26,
+                            ),
+                          ),
+                        ),
+                        if (isSelected)
+                          Icon(Icons.check, size: 22, color: t.accent.accent),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MetricSegmented extends StatelessWidget {
+  const _MetricSegmented({required this.metric, required this.onChange});
   final StatsMetric metric;
   final ValueChanged<StatsMetric> onChange;
   @override
   Widget build(BuildContext context) {
-    return SegmentedButton<StatsMetric>(
-      segments: [
-        for (final m in StatsMetric.values)
-          ButtonSegment(value: m, label: Text(m.label)),
-      ],
-      selected: {metric},
-      onSelectionChanged: (s) => onChange(s.first),
-      style: SegmentedButton.styleFrom(
-        selectedBackgroundColor: AppColors.primary,
-        selectedForegroundColor: Colors.white,
-        side: const BorderSide(color: AppColors.divider),
+    final t = LsTheme.of(context);
+    return Container(
+      decoration: BoxDecoration(
+        color: t.surface.surface2,
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        border: Border.all(color: t.surface.border),
+      ),
+      padding: const EdgeInsets.all(4),
+      child: Row(
+        children: [
+          for (final m in StatsMetric.values)
+            Expanded(
+              child: _SegmentButton(
+                label: m.label,
+                selected: m == metric,
+                onTap: () => onChange(m),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SegmentButton extends StatelessWidget {
+  const _SegmentButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Material(
+      color: selected ? t.accent.accent : Colors.transparent,
+      borderRadius: BorderRadius.circular(LsRadius.r3 - 4),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r3 - 4),
+        onTap: onTap,
+        child: Container(
+          height: 44,
+          alignment: Alignment.center,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (selected) ...[
+                Icon(Icons.check, size: 14, color: t.accent.accentInk),
+                const SizedBox(width: 6),
+              ],
+              Text(
+                label,
+                style: LsType.button.copyWith(
+                  color: selected ? t.accent.accentInk : t.surface.text2,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -168,29 +302,29 @@ class _ExerciseChartCard extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
     final data = ref.watch(exerciseProgressionProvider(exerciseId));
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
 
     return data.when(
       loading: () => const SizedBox(
-          height: 280, child: Center(child: CircularProgressIndicator())),
+        height: 280,
+        child: Center(child: CircularProgressIndicator()),
+      ),
       error: (e, _) => Padding(
         padding: const EdgeInsets.all(16),
-        child: Text('Failed: $e'),
+        child: Text(
+          'Failed: $e',
+          style: LsType.bodyM.copyWith(color: t.surface.text2),
+        ),
       ),
       data: (p) {
         if (p.points.length < 2) {
-          return Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(12),
-            ),
+          return LsCard(
+            padding: LsPad.cardSpacious,
             child: Text(
-              'Log at least 2 sessions of this exercise to see progression.',
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
+              'INSUFFICIENT DATA — LOG AT LEAST 2 SESSIONS',
+              style: LsType.monoMicro.copyWith(color: t.surface.text3),
             ),
           );
         }
@@ -207,44 +341,44 @@ class _ExerciseChartCard extends ConsumerWidget {
         final best = spots.map((s) => s.y).reduce((a, b) => a > b ? a : b);
         final delta = trendDelta(p.points, get);
 
-        final valueLabel = switch (metric) {
-          StatsMetric.topWeight => WeightConv.format(current, unit),
-          StatsMetric.volume => WeightConv.format(current, unit),
-          StatsMetric.oneRm => WeightConv.format(current, unit),
-        };
-
-        return Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.circular(12),
-          ),
+        return LsCard(
+          padding: const EdgeInsets.all(LsSpace.cardHero),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(metric.label.toUpperCase(),
-                            style:
-                                Theme.of(context).textTheme.labelSmall?.copyWith(
-                                      color: AppColors.textSecondary,
-                                    )),
-                        const SizedBox(height: 4),
-                        Text(valueLabel,
-                            style: Theme.of(context).textTheme.headlineLarge),
-                      ],
+                  Expanded(child: EyebrowLabel(metric.label)),
+                  _DeltaPill(deltaKg: delta, unit: unit),
+                ],
+              ),
+              const SizedBox(height: 12),
+              // Big hero value — split between value & unit (mono numeral
+              // colored accent, mono meta unit muted).
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    _heroValue(current, unit, metric),
+                    style: LsType.displayHero.copyWith(
+                      color: t.accent.accent,
+                      fontSize: 56,
+                      height: 0.9,
                     ),
                   ),
-                  _DeltaPill(deltaKg: delta, unit: unit),
+                  const SizedBox(width: 6),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      unit.short.toUpperCase(),
+                      style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                    ),
+                  ),
                 ],
               ),
               const SizedBox(height: 16),
               SizedBox(
-                height: 220,
+                height: 180,
                 child: LineChart(
                   LineChartData(
                     minY: (minY - padY).clamp(0, double.infinity),
@@ -253,48 +387,42 @@ class _ExerciseChartCard extends ConsumerWidget {
                       show: true,
                       drawVerticalLine: false,
                       getDrawingHorizontalLine: (v) => FlLine(
-                        color: AppColors.divider,
+                        color: t.surface.border,
                         strokeWidth: 1,
-                        dashArray: [4, 6],
+                        dashArray: const [4, 6],
                       ),
                     ),
                     borderData: FlBorderData(show: false),
                     titlesData: FlTitlesData(
                       topTitles: const AxisTitles(
-                          sideTitles: SideTitles(showTitles: false)),
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
                       rightTitles: const AxisTitles(
-                          sideTitles: SideTitles(showTitles: false)),
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
+                      leftTitles: const AxisTitles(
+                        sideTitles: SideTitles(showTitles: false),
+                      ),
                       bottomTitles: AxisTitles(
                         sideTitles: SideTitles(
                           showTitles: true,
                           reservedSize: 28,
-                          interval: (p.points.length / 4).ceilToDouble().clamp(1, double.infinity),
+                          interval: (p.points.length / 4).ceilToDouble().clamp(
+                            1,
+                            double.infinity,
+                          ),
                           getTitlesWidget: (v, _) {
                             final i = v.toInt();
                             if (i < 0 || i >= p.points.length) {
                               return const SizedBox.shrink();
                             }
                             return Text(
-                              DateFormat('d/M').format(p.points[i].date),
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .labelSmall
-                                  ?.copyWith(color: AppColors.textSecondary),
+                              DateFormat('M/d').format(p.points[i].date),
+                              style: LsType.monoMicro.copyWith(
+                                color: t.surface.text3,
+                              ),
                             );
                           },
-                        ),
-                      ),
-                      leftTitles: AxisTitles(
-                        sideTitles: SideTitles(
-                          showTitles: true,
-                          reservedSize: 40,
-                          getTitlesWidget: (v, _) => Text(
-                            v.toStringAsFixed(0),
-                            style: Theme.of(context)
-                                .textTheme
-                                .labelSmall
-                                ?.copyWith(color: AppColors.textSecondary),
-                          ),
                         ),
                       ),
                     ),
@@ -302,38 +430,83 @@ class _ExerciseChartCard extends ConsumerWidget {
                       LineChartBarData(
                         spots: spots,
                         isCurved: true,
-                        curveSmoothness: 0.25,
-                        barWidth: 3,
-                        color: AppColors.primary,
+                        curveSmoothness: 0.2,
+                        barWidth: 2,
+                        color: t.accent.accent,
                         dotData: FlDotData(
                           show: true,
-                          getDotPainter: (_, _, _, _) => FlDotCirclePainter(
-                            radius: 3,
-                            color: AppColors.primary,
-                            strokeWidth: 0,
-                          ),
+                          getDotPainter: (spot, _, _, _) {
+                            final isLast =
+                                spot.x.toInt() == p.points.length - 1;
+                            return FlDotCirclePainter(
+                              radius: isLast ? 5 : 2.5,
+                              color: t.accent.accent,
+                              strokeWidth: isLast ? 2 : 0,
+                              strokeColor: t.surface.bg,
+                            );
+                          },
                         ),
                         belowBarData: BarAreaData(
                           show: true,
-                          color: AppColors.primary.withValues(alpha: 0.12),
+                          color: t.accent.accent.withValues(alpha: 0.16),
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Best ${WeightConv.format(best, unit)}',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.only(top: 20),
+                decoration: BoxDecoration(
+                  border: Border(top: BorderSide(color: t.surface.border)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'BEST',
+                        style: LsType.monoMeta.copyWith(
+                          color: t.surface.text2,
+                          fontSize: 15,
+                        ),
+                      ),
                     ),
+                    Text(
+                      '${WeightConv.format(best, unit).toUpperCase()} · '
+                      '${DateFormat('MMM d').format(_bestDate(p.points, get)).toUpperCase()}',
+                      style: LsType.monoMeta.copyWith(
+                        color: t.accent.accent,
+                        fontSize: 15,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
         );
       },
     );
+  }
+
+  static DateTime _bestDate(
+    List<ExerciseProgressionPoint> pts,
+    double Function(ExerciseProgressionPoint) get,
+  ) {
+    var best = pts.first;
+    for (final p in pts) {
+      if (get(p) > get(best)) best = p;
+    }
+    return best.date;
+  }
+
+  static String _heroValue(double value, WeightUnit unit, StatsMetric metric) {
+    // strip unit suffix from end (e.g. "10 kg" → "10")
+    final s = WeightConv.format(value, unit);
+    final pattern = RegExp('\\s*${unit.short}\$', caseSensitive: false);
+    return s.replaceAll(pattern, '');
   }
 }
 
@@ -343,55 +516,23 @@ class _DeltaPill extends StatelessWidget {
   final WeightUnit unit;
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     final positive = deltaKg > 0;
     final neutral = deltaKg == 0;
     final color = neutral
-        ? AppColors.textSecondary
-        : (positive ? AppColors.success : AppColors.danger);
+        ? t.surface.text2
+        : (positive ? t.accent.accent : LsSignals.danger);
     final sign = positive ? '+' : '';
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
-        borderRadius: BorderRadius.circular(8),
+        color: t.surface.surface2,
+        borderRadius: BorderRadius.circular(LsRadius.r2),
+        border: Border.all(color: t.surface.border),
       ),
       child: Text(
-        '$sign${WeightConv.format(deltaKg.abs(), unit)} · 30d',
-        style: TextStyle(
-          color: color,
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-        ),
-      ),
-    );
-  }
-}
-
-class _Empty extends StatelessWidget {
-  const _Empty();
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.bar_chart,
-                size: 64, color: AppColors.textSecondary),
-            const SizedBox(height: 16),
-            Text('No stats yet',
-                style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            Text(
-              'Log at least 2 sessions of an exercise to see progress.',
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-            ),
-          ],
-        ),
+        '$sign${WeightConv.format(deltaKg.abs(), unit).toUpperCase()} · 30D',
+        style: LsType.monoMeta.copyWith(color: color),
       ),
     );
   }

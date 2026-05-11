@@ -5,8 +5,11 @@ import 'package:intl/intl.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/dialogs.dart';
+import '../../../core/widgets/layout.dart';
 import '../../workout/application/active_workout_controller.dart';
 import '../../workout/domain/active_session.dart';
 import '../../workout/domain/workout_set.dart';
@@ -19,53 +22,76 @@ class SessionDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
     final data = ref.watch(sessionDetailProvider(sessionId));
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
-    return Scaffold(
-      appBar: AppBar(title: const Text('Workout')),
-      body: data.when(
+    return LsScreen(
+      topbar: const LsTopbar(title: 'Workout'),
+      child: data.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (d) {
           if (d == null) {
-            return const Center(child: Text('Workout not found.'));
+            return Center(
+              child: Text(
+                'Workout not found.',
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
+              ),
+            );
           }
           final byExercise = <String, List<WorkoutSet>>{};
           for (final s in d.sets) {
             byExercise.putIfAbsent(s.exerciseId, () => []).add(s);
           }
-          final dateStr = DateFormat('EEE, MMM d · HH:mm')
-              .format(d.session.startedAt);
+          final dateStr = DateFormat(
+            'EEE · MMM d · HH:mm',
+          ).format(d.session.startedAt);
           final durMin = d.session.duration.inMinutes;
-          final totalVol = d.sets
-              .fold<double>(0, (t, s) => t + s.weightKg * s.reps);
+          final totalVol = d.sets.fold<double>(
+            0,
+            (t, s) => t + s.weightKg * s.reps,
+          );
           return ListView(
-            padding: const EdgeInsets.all(16),
+            padding: EdgeInsets.zero,
             children: [
-              Text(d.dayName ?? 'Workout',
-                  style: Theme.of(context).textTheme.headlineLarge),
-              const SizedBox(height: 4),
-              Text(
-                dateStr,
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+              // Heading block — date, day name, stat strip.
+              Align(
+                alignment: Alignment.centerRight,
+                child: EyebrowLabel(dateStr.toUpperCase()),
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: LsGap.sub),
               Text(
-                '${d.sets.length} sets · ${WeightConv.format(totalVol, unit)} · ${durMin}m',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+                (d.dayName ?? 'WORKOUT').toUpperCase(),
+                textAlign: TextAlign.right,
+                style: LsType.displayHero.copyWith(color: t.surface.text),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: LsGap.section + LsGap.item),
+              Wrap(
+                spacing: LsGap.tight,
+                runSpacing: LsGap.tight,
+                alignment: WrapAlignment.end,
+                children: [
+                  MetaPill(value: '${d.sets.length}', text: 'SETS'),
+                  MetaPill(
+                    value: _weightValue(totalVol, unit),
+                    text: unit.short,
+                  ),
+                  MetaPill(value: '$durMin', text: 'MIN'),
+                ],
+              ),
+              const SizedBox(height: LsGap.loose),
               for (final entry in byExercise.entries)
                 _ExerciseBlock(
                   exerciseId: entry.key,
                   name: d.exerciseNames[entry.key] ?? 'Exercise',
                   sets: entry.value,
                   unit: unit,
-                  onEdit: (s) => _editSet(context, ref, s, d.exerciseNames[entry.key] ?? 'Exercise'),
+                  onEdit: (s) => _editSet(
+                    context,
+                    ref,
+                    s,
+                    d.exerciseNames[entry.key] ?? 'Exercise',
+                  ),
                   onDelete: (s) => _deleteSet(context, ref, s),
                 ),
             ],
@@ -81,7 +107,6 @@ class SessionDetailScreen extends ConsumerWidget {
     WorkoutSet existing,
     String exerciseName,
   ) async {
-    // Build a lightweight PlannedExercise to satisfy the sheet API.
     final fake = PlannedExercise(
       programExerciseId: 'past',
       exerciseId: existing.exerciseId,
@@ -98,10 +123,12 @@ class SessionDetailScreen extends ConsumerWidget {
       initialReps: existing.reps,
       initialWeightKg: existing.weightKg,
       initialRir: existing.rir,
-      titleOverride: 'Edit set',
+      titleOverride: 'EDIT SET',
     );
     if (result == null) return;
-    await ref.read(workoutDaoProvider).updateSet(
+    await ref
+        .read(workoutDaoProvider)
+        .updateSet(
           existing.copyWith(
             reps: result.reps,
             weightKg: result.weightKg,
@@ -143,30 +170,31 @@ class _ExerciseBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 4),
-            child: Text(name,
-                style: Theme.of(context).textTheme.headlineSmall),
-          ),
-          for (var i = 0; i < sets.length; i++)
-            _SetRow(
-              index: i + 1,
-              set: sets[i],
-              unit: unit,
-              onEdit: () => onEdit(sets[i]),
-              onDelete: () => onDelete(sets[i]),
+    final t = LsTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: LsGap.item),
+      child: LsCard(
+        padding: LsPad.cardStd,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.only(bottom: LsGap.tight),
+              child: Text(
+                name.toUpperCase(),
+                style: LsType.displayM.copyWith(color: t.surface.text),
+              ),
             ),
-          const SizedBox(height: 8),
-        ],
+            for (var i = 0; i < sets.length; i++)
+              _SetRow(
+                index: i + 1,
+                set: sets[i],
+                unit: unit,
+                onEdit: () => onEdit(sets[i]),
+                onDelete: () => onDelete(sets[i]),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -188,30 +216,45 @@ class _SetRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
     return InkWell(
       onTap: onEdit,
       onLongPress: onDelete,
       child: Padding(
-        padding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        padding: const EdgeInsets.symmetric(vertical: 8),
         child: Row(
           children: [
             SizedBox(
-                width: 56,
-                child: Text('Set $index',
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                          fontWeight: FontWeight.w500,
-                        ))),
-            Expanded(
+              width: 60,
               child: Text(
-                '${WeightConv.format(set.weightKg, unit)}  ×  ${set.reps}  ·  RIR ${set.rir}',
-                style: Theme.of(context).textTheme.bodyLarge,
+                'SET $index',
+                style: LsType.monoMeta.copyWith(color: t.surface.text2),
               ),
             ),
-            const Icon(Icons.edit, size: 16, color: AppColors.textSecondary),
+            Expanded(
+              child: Text(
+                '${WeightConv.format(set.weightKg, unit).toUpperCase()}  ×  '
+                '${set.reps}  ·  RIR ${set.rir}',
+                style: LsType.monoData.copyWith(
+                  color: t.surface.text,
+                  fontSize: 18,
+                ),
+              ),
+            ),
+            Icon(Icons.edit_outlined, size: 14, color: t.surface.text3),
           ],
         ),
       ),
     );
   }
+}
+
+/// Numeric portion of a weight (no unit suffix) for MetaPill's bold-number
+/// half.
+String _weightValue(double kg, WeightUnit unit) {
+  final v = WeightConv.fromKg(kg, unit);
+  if (unit == WeightUnit.kg) {
+    return v == v.roundToDouble() ? v.toStringAsFixed(0) : v.toStringAsFixed(1);
+  }
+  return v.round().toString();
 }

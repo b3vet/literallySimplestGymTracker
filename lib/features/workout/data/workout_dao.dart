@@ -165,6 +165,20 @@ class WorkoutDao {
     return rows.map(WorkoutSession.fromRow).toList();
   }
 
+  /// Most recent completed session for the given program day. Used by the
+  /// Start Workout screen to show "LAST 13M" alongside each day card.
+  Future<WorkoutSession?> lastCompletedSessionForDay(
+      String programDayId) async {
+    final rows = await _db.query(
+      'workout_sessions',
+      where: 'program_day_id = ? AND status = ?',
+      whereArgs: [programDayId, SessionStatus.completed.name],
+      orderBy: 'started_at DESC',
+      limit: 1,
+    );
+    return rows.isEmpty ? null : WorkoutSession.fromRow(rows.first);
+  }
+
   /// Most recent completed session for the given program day, started strictly
   /// before [before]. Returns null if none exists.
   Future<WorkoutSession?> previousCompletedSessionForDay(

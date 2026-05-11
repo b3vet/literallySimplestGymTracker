@@ -5,41 +5,48 @@ import 'package:go_router/go_router.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../../core/theme/spec.dart';
+import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 
 class UnitPickScreen extends ConsumerWidget {
   const UnitPickScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
     return Scaffold(
+      backgroundColor: t.surface.bg,
       body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+          padding: const EdgeInsets.symmetric(horizontal: LsSpace.screen),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Spacer(),
-              Text('Pick your unit',
-                  style: Theme.of(context).textTheme.headlineLarge),
-              const SizedBox(height: 8),
+              const EyebrowLabel('GET STARTED'),
+              const SizedBox(height: LsGap.sub),
+              Text(
+                'PICK YOUR\nUNIT.',
+                style: LsType.displayHome.copyWith(color: t.surface.text),
+              ),
+              const SizedBox(height: LsGap.sub),
               Text(
                 'You can change this later in settings.',
-                style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
               ),
               const Spacer(),
               _UnitCard(
                 unit: WeightUnit.kg,
-                title: 'Kilograms',
-                subtitle: 'kg · 0.5 kg steps',
+                title: 'KILOGRAMS',
+                subtitle: 'KG · 0.5 KG STEPS',
                 onTap: () => _choose(context, ref, WeightUnit.kg),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: LsGap.item),
               _UnitCard(
                 unit: WeightUnit.lb,
-                title: 'Pounds',
-                subtitle: 'lb · 1 lb steps',
+                title: 'POUNDS',
+                subtitle: 'LB · 1 LB STEPS',
                 onTap: () => _choose(context, ref, WeightUnit.lb),
               ),
               const Spacer(flex: 2),
@@ -50,7 +57,8 @@ class UnitPickScreen extends ConsumerWidget {
     );
   }
 
-  Future<void> _choose(BuildContext context, WidgetRef ref, WeightUnit u) async {
+  Future<void> _choose(
+      BuildContext context, WidgetRef ref, WeightUnit u) async {
     await ref.read(settingsProvider.notifier).setUnit(u);
     if (context.mounted) context.go('/');
   }
@@ -70,36 +78,30 @@ class _UnitCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: AppColors.surface,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 20),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(title,
-                        style: Theme.of(context).textTheme.headlineSmall),
-                    const SizedBox(height: 4),
-                    Text(
-                      subtitle,
-                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                            color: AppColors.textSecondary,
-                          ),
-                    ),
-                  ],
+    final t = LsTheme.of(context);
+    return LsCard(
+      onTap: onTap,
+      padding: LsPad.cardStd,
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: LsType.displayM.copyWith(color: t.surface.text),
                 ),
-              ),
-              const Icon(Icons.chevron_right, color: AppColors.textSecondary),
-            ],
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                ),
+              ],
+            ),
           ),
-        ),
+          Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
+        ],
       ),
     );
   }
