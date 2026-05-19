@@ -186,11 +186,17 @@ class LsFabPair extends StatelessWidget {
 /// Bottom-sheet body wrapper. Provides:
 ///   • drag-handle bar (a 4×40 pill against the sheet's own background)
 ///   • sheet-tone surface fill + r5 top corners
-///   • optional bottom-only safe-area + viewInsets adjustment for the keyboard
+///   • bottom safe-area
 ///
 /// Use as the topmost widget inside every `showModalBottomSheet` `builder:`.
-/// The handle reads from the surface palette so it stays visible against both
-/// the dark and light sheet tones.
+/// The handle reads from the surface palette so it stays visible against
+/// both the dark and light sheet tones.
+///
+/// **Keyboard inset:** `showModalBottomSheet` already pads its content with
+/// `MediaQuery.viewInsets.bottom` internally — that's how Flutter pushes
+/// the sheet up clear of the keyboard. `LsSheet` MUST NOT also apply that
+/// padding, or the content gets shifted up by 2× the keyboard height,
+/// jamming everything against the top of the screen.
 class LsSheet extends StatelessWidget {
   const LsSheet({
     super.key,
@@ -205,7 +211,6 @@ class LsSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = LsTheme.of(context);
-    final viewInsets = MediaQuery.of(context).viewInsets.bottom;
     return Container(
       decoration: fillBackground
           ? BoxDecoration(
@@ -216,27 +221,34 @@ class LsSheet extends StatelessWidget {
           : null,
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: viewInsets),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const SizedBox(height: 10),
-              Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: t.surface.borderStrong,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 10),
+            Center(
+              child: Container(
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: t.surface.borderStrong,
+                  borderRadius: BorderRadius.circular(2),
                 ),
               ),
-              const SizedBox(height: 6),
-              Padding(padding: padding, child: child),
-            ],
-          ),
+            ),
+            const SizedBox(height: 6),
+            // Flexible lets the child accept a bounded maxHeight from
+            // Flutter's layout pass (= parent.maxHeight − handle − padding).
+            // `FlexFit.loose` means short content still sizes to its own
+            // intrinsic height (sheet stays compact), but tall content is
+            // capped at the available space — so a scrollable child can
+            // scroll within real, accurate bounds instead of guessing them
+            // from MediaQuery.
+            Flexible(
+              fit: FlexFit.loose,
+              child: Padding(padding: padding, child: child),
+            ),
+          ],
         ),
       ),
     );

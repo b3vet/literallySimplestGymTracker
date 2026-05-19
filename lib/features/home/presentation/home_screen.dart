@@ -32,97 +32,120 @@ class HomeScreen extends ConsumerWidget {
         child: Padding(
           padding: const EdgeInsets.fromLTRB(LsSpace.screen, LsGap.screenTop,
               LsSpace.screen, LsGap.screenBot),
+          // The outer Column has a fixed topbar at the top, a scrollable
+          // middle section, and a footer pinned to the bottom. On a
+          // tall device the scroll view simply doesn't scroll — its
+          // intrinsic content fits inside the Expanded slot. On a small
+          // device (iPhone SE / mini) the hero + CTA + 4 tile rows
+          // legitimately exceed the viewport, so the middle section
+          // scrolls and the footer stays put. This replaces the old
+          // `Spacer()` + content-as-direct-Column-children layout,
+          // which overflowed by ~20px in that regime.
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── Topbar: brand + settings ─────────────────────────────
+              // ── Topbar: brand + today's date ─────────────────────────
+              // Settings moved into the numbered tile rows below as #05.
+              // The right slot now carries the date eyebrow — it lives
+              // at the top of the page where you already glance to
+              // check the time / battery, instead of competing with the
+              // hero for the user's eye.
               Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
                   const BrandMark(),
                   const Spacer(),
-                  LsIconSquare(
-                    icon: Icons.settings_outlined,
-                    onTap: () => context.push('/settings'),
-                    semanticLabel: 'Settings',
-                  ),
+                  EyebrowLabel(today.toUpperCase()),
                 ],
               ),
               const SizedBox(height: LsGap.section),
-              // ── Right-aligned date eyebrow ───────────────────────────
-              Align(
-                alignment: Alignment.centerRight,
-                child: EyebrowLabel(today.toUpperCase()),
-              ),
-              const SizedBox(height: LsGap.sub),
-              // ── Hero — two lines, breaking at the period ─────────────
-              Text(
-                'TRAIN HEAVY.',
-                textAlign: TextAlign.right,
-                style: LsType.displayHome.copyWith(color: t.surface.text),
-              ),
-              Text(
-                'LOG CLEAN.',
-                textAlign: TextAlign.right,
-                style: LsType.displayHome.copyWith(color: t.surface.text),
-              ),
-              const SizedBox(height: LsGap.section),
-              // ── Primary CTA — accent fill, dark inner arrow box ──────
-              if (hasActive)
-                _StartCta(
-                  label: 'RESUME WORKOUT',
-                  caption: 'TAP TO CONTINUE',
-                  onTap: () => context.push('/workout/active'),
-                )
-              else
-                _StartCta(
-                  label: 'START WORKOUT',
-                  caption: programs.maybeWhen(
-                    data: (list) => list.isEmpty
-                        ? 'NO PROGRAMS YET — CREATE ONE'
-                        : 'PICK A PROGRAM DAY',
-                    orElse: () => '...',
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // ── Hero — two lines, breaking at the period ─────
+                      Text(
+                        'TRAIN HEAVY.',
+                        textAlign: TextAlign.right,
+                        style:
+                            LsType.displayHome.copyWith(color: t.surface.text),
+                      ),
+                      Text(
+                        'LOG CLEAN.',
+                        textAlign: TextAlign.right,
+                        style:
+                            LsType.displayHome.copyWith(color: t.surface.text),
+                      ),
+                      const SizedBox(height: LsGap.section),
+                      // ── Primary CTA — accent fill, dark inner arrow ──
+                      if (hasActive)
+                        _StartCta(
+                          label: 'RESUME WORKOUT',
+                          caption: 'TAP TO CONTINUE',
+                          onTap: () => context.push('/workout/active'),
+                        )
+                      else
+                        _StartCta(
+                          label: 'START WORKOUT',
+                          caption: programs.maybeWhen(
+                            data: (list) => list.isEmpty
+                                ? 'NO PROGRAMS YET — CREATE ONE'
+                                : 'PICK A PROGRAM DAY',
+                            orElse: () => '...',
+                          ),
+                          onTap: () => context.push('/workout/start'),
+                        ),
+                      const SizedBox(height: LsGap.section),
+                      // ── Numbered tile rows ───────────────────────────
+                      _TileRow(
+                        index: 1,
+                        label: 'PROGRAMS',
+                        meta: programs.maybeWhen(
+                          data: (list) => list.isEmpty
+                              ? 'NONE YET'
+                              : '${list.length} ACTIVE',
+                          orElse: () => '—',
+                        ),
+                        onTap: () => context.push('/programs'),
+                      ),
+                      const SizedBox(height: LsGap.item),
+                      _TileRow(
+                        index: 2,
+                        label: 'HISTORY',
+                        meta: lastSession.maybeWhen(
+                          data: (s) =>
+                              s == null ? 'NONE YET' : 'PAST SESSIONS',
+                          orElse: () => '—',
+                        ),
+                        onTap: () => context.push('/history'),
+                      ),
+                      const SizedBox(height: LsGap.item),
+                      _TileRow(
+                        index: 3,
+                        label: 'STATS',
+                        meta: 'TOP SET · VOLUME · 1RM',
+                        onTap: () => context.push('/stats'),
+                      ),
+                      const SizedBox(height: LsGap.item),
+                      _TileRow(
+                        index: 4,
+                        label: 'TIPS',
+                        meta: 'COACHING NOTES',
+                        onTap: () => context.push('/tips'),
+                      ),
+                      const SizedBox(height: LsGap.item),
+                      _TileRow(
+                        index: 5,
+                        label: 'SETTINGS',
+                        meta: 'UNIT · ACCENT · LIVE ACTIVITY',
+                        onTap: () => context.push('/settings'),
+                      ),
+                    ],
                   ),
-                  onTap: () => context.push('/workout/start'),
                 ),
-              const SizedBox(height: LsGap.section),
-              // ── Numbered tile rows ───────────────────────────────────
-              _TileRow(
-                index: 1,
-                label: 'PROGRAMS',
-                meta: programs.maybeWhen(
-                  data: (list) => list.isEmpty
-                      ? 'NONE YET'
-                      : '${list.length} ACTIVE',
-                  orElse: () => '—',
-                ),
-                onTap: () => context.push('/programs'),
               ),
-              const SizedBox(height: LsGap.item),
-              _TileRow(
-                index: 2,
-                label: 'HISTORY',
-                meta: lastSession.maybeWhen(
-                  data: (s) => s == null ? 'NONE YET' : 'PAST SESSIONS',
-                  orElse: () => '—',
-                ),
-                onTap: () => context.push('/history'),
-              ),
-              const SizedBox(height: LsGap.item),
-              _TileRow(
-                index: 3,
-                label: 'STATS',
-                meta: 'TOP SET · VOLUME · 1RM',
-                onTap: () => context.push('/stats'),
-              ),
-              const SizedBox(height: LsGap.item),
-              _TileRow(
-                index: 4,
-                label: 'TIPS',
-                meta: 'COACHING NOTES',
-                onTap: () => context.push('/tips'),
-              ),
-              // ── Last-session strip pushed to bottom ──────────────────
-              const Spacer(),
+              // ── Last-session strip pinned to bottom ──────────────────
               _LastSessionFooter(
                 summary: lastSession.value,
                 unit: unit,

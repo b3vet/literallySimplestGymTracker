@@ -37,7 +37,7 @@ android {
 
     defaultConfig {
         applicationId = "com.berke.literally_simplest_gym_tracker"
-        minSdk = 23
+        minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName

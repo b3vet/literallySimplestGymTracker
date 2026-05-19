@@ -9,7 +9,7 @@ Future<Database> _openInMemory() async {
   return factory.openDatabase(
     inMemoryDatabasePath,
     options: OpenDatabaseOptions(
-      version: 2,
+      version: 3,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, _) async {
         final b = db.batch();
@@ -17,6 +17,9 @@ Future<Database> _openInMemory() async {
           b.execute(stmt);
         }
         for (final stmt in schemaV2Up) {
+          b.execute(stmt);
+        }
+        for (final stmt in schemaV3Up) {
           b.execute(stmt);
         }
         await b.commit(noResult: true);

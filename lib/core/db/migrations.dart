@@ -66,3 +66,33 @@ const schemaV1 = <String>[
 const schemaV2Up = <String>[
   'ALTER TABLE program_exercises ADD COLUMN weight_step REAL',
 ];
+
+/// v3: session-scoped exercise overrides. When a lifter swaps an exercise
+/// mid-workout (e.g. "smith machine is occupied, do the plate-loaded
+/// variant"), we persist the override here so it survives an app restart.
+/// The override is keyed by (session_id, program_exercise_id) and only
+/// applies to that one session — the program template stays untouched.
+///
+/// `previous_exercise_id` lets the active-workout screen show a
+/// "PREVIOUS: N SETS ON [OLD NAME]" affordance for sets logged at this slot
+/// before the swap. It is nullable because the very first swap of a slot
+/// records its original planned exercise; subsequent swaps keep updating it
+/// to whatever was in `exercise_id` immediately before the new swap.
+const schemaV3Up = <String>[
+  '''
+  CREATE TABLE session_exercise_overrides (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL REFERENCES workout_sessions(id) ON DELETE CASCADE,
+    program_exercise_id TEXT NOT NULL,
+    exercise_id TEXT NOT NULL REFERENCES exercises(id),
+    previous_exercise_id TEXT REFERENCES exercises(id),
+    target_sets INTEGER NOT NULL,
+    target_reps_min INTEGER NOT NULL,
+    target_reps_max INTEGER NOT NULL,
+    default_weight REAL NOT NULL,
+    weight_step REAL,
+    UNIQUE (session_id, program_exercise_id)
+  )
+  ''',
+  'CREATE INDEX idx_seo_session ON session_exercise_overrides(session_id)',
+];

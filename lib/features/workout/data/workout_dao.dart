@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
+import '../domain/session_exercise_override.dart';
 import '../domain/workout_session.dart';
 import '../domain/workout_set.dart';
 
@@ -235,4 +236,102 @@ class TonnagePoint {
   final String sessionId;
   final DateTime startedAt;
   final double tonnageKg;
+}
+
+// ---------- Session exercise overrides ----------
+
+extension WorkoutDaoOverrides on WorkoutDao {
+  /// Insert-or-update a session-scoped override for the given program
+  /// exercise slot. Re-swapping the same slot updates the row in place;
+  /// `previous_exercise_id` is rotated to whatever was the slot's last
+  /// known exercise so the UI can surface a "PREVIOUS:" affordance.
+  Future<void> upsertOverride({
+    required String sessionId,
+    required String programExerciseId,
+    required String exerciseId,
+    String? previousExerciseId,
+    required int targetSets,
+    required int targetRepsMin,
+    required int targetRepsMax,
+    required double defaultWeightKg,
+    double? weightStepKg,
+  }) async {
+    // Look up the existing override (if any) so we can preserve its id and
+    // rotate previous_exercise_id correctly. sqflite has no UPSERT helper,
+    // so we do this with an explicit lookup + insert/update.
+    final existing = await _db.query(
+      'session_exercise_overrides',
+      where: 'session_id = ? AND program_exercise_id = ?',
+      whereArgs: [sessionId, programExerciseId],
+      limit: 1,
+    );
+    final row = <String, Object?>{
+      'session_id': sessionId,
+      'program_exercise_id': programExerciseId,
+      'exercise_id': exerciseId,
+      'previous_exercise_id': previousExerciseId,
+      'target_sets': targetSets,
+      'target_reps_min': targetRepsMin,
+      'target_reps_max': targetRepsMax,
+      'default_weight': defaultWeightKg,
+      'weight_step': weightStepKg,
+    };
+    if (existing.isEmpty) {
+      row['id'] = const Uuid().v4();
+      await _db.insert('session_exercise_overrides', row);
+    } else {
+      await _db.update(
+        'session_exercise_overrides',
+        row,
+        where: 'id = ?',
+        whereArgs: [existing.first['id']],
+      );
+    }
+  }
+
+  /// Drop the override for a slot. Used by "REVERT TO PLAN" in the
+  /// active-workout edit sheet.
+  Future<void> deleteOverride({
+    required String sessionId,
+    required String programExerciseId,
+  }) async {
+    await _db.delete(
+      'session_exercise_overrides',
+      where: 'session_id = ? AND program_exercise_id = ?',
+      whereArgs: [sessionId, programExerciseId],
+    );
+  }
+
+  /// All overrides for a session, with the substituted exercise's name
+  /// joined in. Used at resume time to re-apply overrides to the in-memory
+  /// queue.
+  Future<List<SessionExerciseOverride>> overridesForSession(
+      String sessionId) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT seo.*, e.name AS exercise_name
+      FROM session_exercise_overrides seo
+      JOIN exercises e ON e.id = seo.exercise_id
+      WHERE seo.session_id = ?
+      ''',
+      [sessionId],
+    );
+    return rows
+        .map((r) => SessionExerciseOverride(
+              id: r['id'] as String,
+              sessionId: r['session_id'] as String,
+              programExerciseId: r['program_exercise_id'] as String,
+              exerciseId: r['exercise_id'] as String,
+              exerciseName: r['exercise_name'] as String,
+              previousExerciseId: r['previous_exercise_id'] as String?,
+              targetSets: (r['target_sets'] as num).toInt(),
+              targetRepsMin: (r['target_reps_min'] as num).toInt(),
+              targetRepsMax: (r['target_reps_max'] as num).toInt(),
+              defaultWeightKg: (r['default_weight'] as num).toDouble(),
+              weightStepKg: r['weight_step'] == null
+                  ? null
+                  : (r['weight_step'] as num).toDouble(),
+            ))
+        .toList();
+  }
 }

@@ -16,6 +16,7 @@ import '../../features/workout/presentation/active_workout_screen.dart';
 import '../../features/workout/presentation/start_workout_screen.dart';
 import '../../features/workout/presentation/summary_screen.dart';
 import '../settings/settings_provider.dart';
+import 'page_transitions.dart';
 
 final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
@@ -29,29 +30,43 @@ final appRouterProvider = Provider<GoRouter>((ref) {
     },
     refreshListenable: _RiverpodRefresh(ref),
     routes: [
+      // Every route uses `pageBuilder` + `liftPage` so the whole app
+      // shares a single navigation transition language (see
+      // page_transitions.dart). Switching back to `builder:` on any
+      // route reverts that route to the platform default — useful for
+      // debugging, but otherwise keep them consistent.
       GoRoute(
         path: '/onboarding/unit',
-        builder: (context, state) => const UnitPickScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const UnitPickScreen()),
       ),
       GoRoute(
         path: '/',
-        builder: (context, state) => const HomeScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const HomeScreen()),
       ),
       GoRoute(
         path: '/programs',
-        builder: (context, state) => const ProgramsListScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const ProgramsListScreen()),
         routes: [
           GoRoute(
             path: ':pid',
-            builder: (context, state) => ProgramEditorScreen(
-              programId: state.pathParameters['pid']!,
+            pageBuilder: (context, state) => liftPage(
+              key: state.pageKey,
+              child: ProgramEditorScreen(
+                programId: state.pathParameters['pid']!,
+              ),
             ),
             routes: [
               GoRoute(
                 path: 'days/:did',
-                builder: (context, state) => DayEditorScreen(
-                  programId: state.pathParameters['pid']!,
-                  dayId: state.pathParameters['did']!,
+                pageBuilder: (context, state) => liftPage(
+                  key: state.pageKey,
+                  child: DayEditorScreen(
+                    programId: state.pathParameters['pid']!,
+                    dayId: state.pathParameters['did']!,
+                  ),
                 ),
               ),
             ],
@@ -60,40 +75,51 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       ),
       GoRoute(
         path: '/workout/start',
-        builder: (context, state) => const StartWorkoutScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const StartWorkoutScreen()),
       ),
       GoRoute(
         path: '/workout/active',
-        builder: (context, state) => const ActiveWorkoutScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const ActiveWorkoutScreen()),
       ),
       GoRoute(
         path: '/workout/summary/:sid',
-        builder: (context, state) =>
-            SummaryScreen(sessionId: state.pathParameters['sid']!),
+        pageBuilder: (context, state) => liftPage(
+          key: state.pageKey,
+          child: SummaryScreen(sessionId: state.pathParameters['sid']!),
+        ),
       ),
       GoRoute(
         path: '/history',
-        builder: (context, state) => const HistoryScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const HistoryScreen()),
         routes: [
           GoRoute(
             path: ':sid',
-            builder: (context, state) => SessionDetailScreen(
-              sessionId: state.pathParameters['sid']!,
+            pageBuilder: (context, state) => liftPage(
+              key: state.pageKey,
+              child: SessionDetailScreen(
+                sessionId: state.pathParameters['sid']!,
+              ),
             ),
           ),
         ],
       ),
       GoRoute(
         path: '/stats',
-        builder: (context, state) => const StatsScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const StatsScreen()),
       ),
       GoRoute(
         path: '/tips',
-        builder: (context, state) => const TipsScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const TipsScreen()),
       ),
       GoRoute(
         path: '/settings',
-        builder: (context, state) => const SettingsScreen(),
+        pageBuilder: (context, state) =>
+            liftPage(key: state.pageKey, child: const SettingsScreen()),
       ),
     ],
   );

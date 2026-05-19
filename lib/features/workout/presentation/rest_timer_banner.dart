@@ -43,18 +43,25 @@ class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
       padding: const EdgeInsets.fromLTRB(
           LsSpace.screen, LsGap.tight, LsSpace.screen, LsGap.section),
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 18),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
         decoration: BoxDecoration(
           color: t.accent.accentDim,
           borderRadius: BorderRadius.circular(LsRadius.r3),
           border: Border.all(color: t.accent.accent),
         ),
+        // On a 360pt-wide phone (iPhone SE / mini), the previous row
+        // overflowed when all three chips, the timer column, and the icon
+        // shared a single line. We trim every horizontal token (icon, gap,
+        // chip padding, chip label fontSize) just enough to fit, and let
+        // the timer column flex with `Flexible` so the chips can win
+        // priority for the constrained space.
         child: Row(
           children: [
-            Icon(Icons.timer, color: t.accent.accent, size: 28),
-            const SizedBox(width: LsGap.inline),
+            Icon(Icons.timer, color: t.accent.accent, size: 22),
+            const SizedBox(width: LsGap.tight),
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
               children: [
                 Text(
                   'REST',
@@ -68,25 +75,28 @@ class _RestTimerBannerState extends ConsumerState<RestTimerBanner> {
                   _fmt(remaining),
                   style: LsType.displayM.copyWith(
                     color: t.accent.accent,
-                    fontSize: 36,
+                    fontSize: 32,
                     height: 1.0,
                   ),
                 ),
               ],
             ),
+            // Spacer pushes the three chips to the trailing edge of the
+            // banner so they form a tight, right-aligned action cluster
+            // rather than floating against the timer.
             const Spacer(),
             _Chip(
-              label: '-15s',
+              label: '-15',
               onTap: () => ref.read(restTimerProvider.notifier).adjust(-15),
             ),
-            const SizedBox(width: LsGap.tight),
+            const SizedBox(width: 6),
             _Chip(
-              label: '+15s',
+              label: '+15',
               onTap: () => ref.read(restTimerProvider.notifier).adjust(15),
             ),
-            const SizedBox(width: LsGap.tight),
+            const SizedBox(width: 6),
             _Chip(
-              label: 'Cancel',
+              label: 'STOP',
               danger: true,
               onTap: () => ref.read(restTimerProvider.notifier).dismiss(),
             ),
@@ -123,14 +133,14 @@ class _Chip extends StatelessWidget {
         borderRadius: BorderRadius.circular(LsRadius.r2),
         onTap: onTap,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
             border: Border.all(color: t.surface.border),
             borderRadius: BorderRadius.circular(LsRadius.r2),
           ),
           child: Text(
             label,
-            style: LsType.monoMeta.copyWith(color: fg, fontSize: 14),
+            style: LsType.monoMeta.copyWith(color: fg, fontSize: 13),
           ),
         ),
       ),

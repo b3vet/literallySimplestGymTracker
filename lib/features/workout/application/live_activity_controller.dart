@@ -1,10 +1,12 @@
 import 'dart:io' show Platform;
+import 'dart:ui' show Color;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:live_activities/live_activities.dart';
 
 import '../../../core/settings/settings_repository.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../core/util/weight.dart';
 import '../domain/active_session.dart';
 import 'workout_progress.dart';
@@ -56,6 +58,7 @@ class LiveActivityController {
   Future<void> start({
     required ActiveSession session,
     required WeightUnit unit,
+    required LsAccentSpec accent,
     DateTime? restEndsAt,
   }) {
     return _enqueue(() async {
@@ -70,7 +73,8 @@ class LiveActivityController {
               '[LiveActivity] start: session already done, not creating');
           return;
         }
-        final state = _stateFromProgress(progress, unit: unit, restEndsAt: restEndsAt);
+        final state = _stateFromProgress(progress,
+            unit: unit, accent: accent, restEndsAt: restEndsAt);
         // iOSEnableRemoteUpdates=false: we drive updates from the app
         // itself. Setting it to true (default) makes the plugin call
         // Activity.request(pushType: .token), which requires the Push
@@ -100,6 +104,7 @@ class LiveActivityController {
   Future<void> update({
     required ActiveSession session,
     required WeightUnit unit,
+    required LsAccentSpec accent,
     DateTime? restEndsAt,
   }) {
     return _enqueue(() async {
@@ -112,7 +117,8 @@ class LiveActivityController {
         return;
       }
       try {
-        final state = _stateFromProgress(progress, unit: unit, restEndsAt: restEndsAt);
+        final state = _stateFromProgress(progress,
+            unit: unit, accent: accent, restEndsAt: restEndsAt);
         if (_activityId == null) {
           final id = await _plugin.createOrUpdateActivity(
             session.sessionId,
@@ -148,6 +154,7 @@ class LiveActivityController {
   Map<String, dynamic> _stateFromProgress(
     WorkoutProgress p, {
     required WeightUnit unit,
+    required LsAccentSpec accent,
     DateTime? restEndsAt,
   }) {
     final pe = p.exercise!;
@@ -178,7 +185,25 @@ class LiveActivityController {
           ? 0
           : restEndsAt.millisecondsSinceEpoch ~/ 1000,
       'isFinished': false,
+      // Accent forwarded as ARGB int (0xAARRGGBB) so the Swift side can
+      // decode without colorspace mismatches. The widget reads it from the
+      // shared UserDefaults and falls back to a built-in default if absent.
+      'accentArgb': _argb(accent.accent),
+      'accentInkArgb': _argb(accent.accentInk),
     };
+  }
+
+  /// Convert a Flutter [Color] to a 32-bit ARGB int the widget extension can
+  /// reconstruct via shift+mask. Flutter 3.27 deprecates `.value` in favour of
+  /// the per-channel accessors; this preserves the same semantics without
+  /// reaching for the deprecated property.
+  int _argb(Color c) {
+    int chan(double v) => (v.clamp(0.0, 1.0) * 255).round() & 0xff;
+    final a = chan(c.a);
+    final r = chan(c.r);
+    final g = chan(c.g);
+    final b = chan(c.b);
+    return (a << 24) | (r << 16) | (g << 8) | b;
   }
 }
 

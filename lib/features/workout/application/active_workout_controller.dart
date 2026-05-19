@@ -2,11 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
+import '../../../core/theme/app_theme.dart';
 import '../../../main.dart' show databaseProvider;
 import '../../programs/application/programs_provider.dart';
 import '../../programs/data/program_dao.dart';
+import '../../programs/domain/program_exercise.dart';
 import '../data/workout_dao.dart';
 import '../domain/active_session.dart';
+import '../domain/session_exercise_override.dart';
 import '../domain/workout_set.dart';
 import 'live_activity_controller.dart';
 import 'pr_detector.dart';
@@ -38,6 +41,15 @@ final lastWeightForExerciseProvider =
   return last?.weightKg;
 });
 
+/// Display name for an exerciseId. Watched by the active workout screen to
+/// render the "PREVIOUS: N SETS ON [OLD NAME]" affordance for slots that
+/// have been substituted mid-session.
+final exerciseNameProvider =
+    FutureProvider.family<String?, String>((ref, exerciseId) async {
+  final e = await ref.read(programDaoProvider).findExercise(exerciseId);
+  return e?.name;
+});
+
 class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   WorkoutDao get _workoutDao => ref.read(workoutDaoProvider);
   ProgramDao get _programDao => ref.read(programDaoProvider);
@@ -61,11 +73,15 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   WeightUnit get _unit =>
       ref.read(settingsProvider).unit ?? WeightUnit.kg;
 
+  LsAccentSpec get _accent =>
+      lsAccentSpec(ref.read(settingsProvider).accent);
+
   void _pushLiveActivity(ActiveSession session) {
     if (!_liveActivityEnabled) return;
     _liveActivity.update(
       session: session,
       unit: _unit,
+      accent: _accent,
       restEndsAt: _currentRestEndsAt(),
     );
   }
@@ -80,7 +96,8 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       await _workoutDao.abandonSession(session.id);
       return null;
     }
-    final queue = planned.map(PlannedExercise.fromView).toList();
+    final overrides = await _workoutDao.overridesForSession(session.id);
+    final queue = _applyOverrides(planned, overrides);
     final loggedSets = await _workoutDao.setsForSession(session.id);
     final cursor = _cursorAfter(queue, loggedSets);
     final resumed = ActiveSession(
@@ -95,6 +112,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       _liveActivity.start(
         session: resumed,
         unit: _unit,
+        accent: _accent,
         restEndsAt: _currentRestEndsAt(),
       );
     }
@@ -143,6 +161,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         await _liveActivity.start(
           session: created,
           unit: _unit,
+          accent: _accent,
           restEndsAt: _currentRestEndsAt(),
         );
       }
@@ -246,6 +265,122 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   /// Equivalent to [goNext] — kept under this name for callers expressing
   /// intent.
   Future<void> skipCurrentExercise() => goNext();
+
+  /// Apply session-scoped overrides to the planned queue.
+  ///
+  /// The program template is fixed once a workout starts, but a lifter can
+  /// swap any slot mid-session (smith machine occupied → switch to the
+  /// plate-loaded variant). Each override targets one [PlannedExercise] by
+  /// its `programExerciseId`. Unaffected slots are returned unchanged.
+  List<PlannedExercise> _applyOverrides(
+    List<ProgramExerciseView> planned,
+    List<SessionExerciseOverride> overrides,
+  ) {
+    if (overrides.isEmpty) {
+      return planned.map(PlannedExercise.fromView).toList();
+    }
+    final byPeId = {for (final o in overrides) o.programExerciseId: o};
+    return planned.map((v) {
+      final base = PlannedExercise.fromView(v);
+      final o = byPeId[v.pe.id];
+      if (o == null) return base;
+      return base.copyWith(
+        exerciseId: o.exerciseId,
+        exerciseName: o.exerciseName,
+        targetSets: o.targetSets,
+        targetRepsMin: o.targetRepsMin,
+        targetRepsMax: o.targetRepsMax,
+        defaultWeightKg: o.defaultWeightKg,
+        weightStepKg: o.weightStepKg,
+        isOverridden: true,
+        previousExerciseId: o.previousExerciseId,
+      );
+    }).toList();
+  }
+
+  /// Substitute one queue slot with a different exercise for this session
+  /// only. The program template is never modified. Logged sets prior to
+  /// the swap retain their original `exercise_id` — they show up under the
+  /// old exercise in the summary, which is honest history.
+  ///
+  /// The cursor stays at the same queue index; the new exercise's set
+  /// count starts from zero (the cursor-advance logic already keys on
+  /// `pe.exerciseId`).
+  Future<void> substituteExercise({
+    required int queueIdx,
+    required String exerciseName,
+    required int targetSets,
+    required int targetRepsMin,
+    required int targetRepsMax,
+    required double defaultWeightKg,
+    double? weightStepKg,
+  }) async {
+    final current = state.value;
+    if (current == null) return;
+    if (queueIdx < 0 || queueIdx >= current.queue.length) return;
+    final slot = current.queue[queueIdx];
+    final exercise = await _programDao.findOrCreateExercise(exerciseName);
+    await _workoutDao.upsertOverride(
+      sessionId: current.sessionId,
+      programExerciseId: slot.programExerciseId,
+      exerciseId: exercise.id,
+      // Preserve the slot's pre-swap exerciseId so the UI can surface a
+      // "PREVIOUS: N SETS ON [OLD NAME]" affordance for any sets the user
+      // already logged at this slot.
+      previousExerciseId: slot.exerciseId,
+      targetSets: targetSets,
+      targetRepsMin: targetRepsMin,
+      targetRepsMax: targetRepsMax,
+      defaultWeightKg: defaultWeightKg,
+      weightStepKg: weightStepKg,
+    );
+    final replaced = slot.copyWith(
+      exerciseId: exercise.id,
+      exerciseName: exercise.name,
+      targetSets: targetSets,
+      targetRepsMin: targetRepsMin,
+      targetRepsMax: targetRepsMax,
+      defaultWeightKg: defaultWeightKg,
+      weightStepKg: weightStepKg,
+      isOverridden: true,
+      previousExerciseId: slot.exerciseId,
+    );
+    final newQueue = [...current.queue]..[queueIdx] = replaced;
+    final next = current.copyWith(queue: newQueue);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
+  }
+
+  /// Remove the session override on a slot and restore the planned exercise.
+  /// Logged sets under the substitute are left in the database — they
+  /// remain visible in the summary and contribute to that substitute
+  /// exercise's history. Reverting only affects the queue going forward.
+  Future<void> revertSubstitution(int queueIdx) async {
+    final current = state.value;
+    if (current == null) return;
+    if (queueIdx < 0 || queueIdx >= current.queue.length) return;
+    final slot = current.queue[queueIdx];
+    if (!slot.isOverridden) return;
+    await _workoutDao.deleteOverride(
+      sessionId: current.sessionId,
+      programExerciseId: slot.programExerciseId,
+    );
+    // Rebuild this single queue item from the planned program. We refetch
+    // all planned exercises for the day and pick the one matching this
+    // slot's programExerciseId — cheap on a typical workout day.
+    final planned =
+        await _programDao.listProgramExercises(current.programDayId);
+    final original = planned.firstWhere(
+      (v) => v.pe.id == slot.programExerciseId,
+      orElse: () => throw StateError(
+          'Cannot revert: program exercise no longer exists.'),
+    );
+    final restored = PlannedExercise.fromView(original);
+    final newQueue = [...current.queue]..[queueIdx] = restored;
+    final next = current.copyWith(queue: newQueue);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
+  }
 
   /// Finish the session (completed). Returns the session ID for navigation.
   Future<String?> finish() async {

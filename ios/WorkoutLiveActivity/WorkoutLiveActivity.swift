@@ -47,6 +47,11 @@ private struct WorkoutVM {
     let setLines: [String]
     let restEndsAtSec: Double
     let isFinished: Bool
+    /// User-selected accent color forwarded from the Flutter side. Read as
+    /// the same Color the app shows so the lock-screen widget tracks
+    /// whatever the user chose in Settings — no more "always red" mismatch.
+    let accent: Color
+    let accentInk: Color
 
     /// Only count rest as active if the timestamp is in the future at body
     /// evaluation time — guards against showing a stale `0:00` countdown if
@@ -69,6 +74,18 @@ private struct WorkoutVM {
 
     static func load(from attrs: LiveActivitiesAppAttributes) -> WorkoutVM {
         let d = workoutSharedDefaults
+        // The Flutter MethodChannel typically lands ints as NSNumber on the
+        // Swift side. Bridging through NSNumber handles the 0xFFRRGGBB case
+        // (high alpha byte makes the value too big for signed Int32) without
+        // sign-flipping.
+        func readArgb(_ key: String) -> Int64? {
+            if let n = d?.object(forKey: attrs.prefixedKey(key)) as? NSNumber {
+                return n.int64Value
+            }
+            return nil
+        }
+        let accentRaw = readArgb("accentArgb")
+        let accentInkRaw = readArgb("accentInkArgb")
         return WorkoutVM(
             exerciseName: d?.string(forKey: attrs.prefixedKey("exerciseName")) ?? "Workout",
             exerciseIndex: d?.integer(forKey: attrs.prefixedKey("exerciseIndex")) ?? 0,
@@ -82,9 +99,23 @@ private struct WorkoutVM {
             lastReps: d?.integer(forKey: attrs.prefixedKey("lastReps")) ?? 0,
             setLines: d?.stringArray(forKey: attrs.prefixedKey("setLines")) ?? [],
             restEndsAtSec: d?.double(forKey: attrs.prefixedKey("restEndsAtSec")) ?? 0,
-            isFinished: d?.bool(forKey: attrs.prefixedKey("isFinished")) ?? false
+            isFinished: d?.bool(forKey: attrs.prefixedKey("isFinished")) ?? false,
+            accent: colorFromArgb(accentRaw) ?? brandOrange,
+            accentInk: colorFromArgb(accentInkRaw) ?? .white
         )
     }
+}
+
+/// Decode the 0xAARRGGBB int written by the Dart side into a SwiftUI Color.
+/// Returns nil when the value is missing (defaults won't have a stored Int)
+/// so the caller can pick a hardcoded fallback.
+private func colorFromArgb(_ raw: Int64?) -> Color? {
+    guard let raw = raw, raw != 0 else { return nil }
+    let a = Double((raw >> 24) & 0xff) / 255.0
+    let r = Double((raw >> 16) & 0xff) / 255.0
+    let g = Double((raw >> 8)  & 0xff) / 255.0
+    let b = Double(raw         & 0xff) / 255.0
+    return Color(.sRGB, red: r, green: g, blue: b, opacity: a)
 }
 
 // MARK: - Theme tokens
@@ -102,6 +133,27 @@ private let brandSurface2 = Color(red: 0.114, green: 0.125, blue: 0.145) // #1D2
 
 // MARK: - Building blocks
 
+/// Small app-icon glyph rendered with a rounded mask. Used everywhere we
+/// previously used `Image(systemName: "dumbbell.fill")` — the lifter sees
+/// THEIR app's mark rather than a generic SF Symbol. We mask the asset to a
+/// rounded square so it reads as an icon at small sizes (a square PNG with
+/// hard corners looks like a clipped sticker on the dark widget surface).
+private struct AppGlyph: View {
+    let size: CGFloat
+    var accent: Color = .white  // unused visually today; kept so call sites
+                                // can match the accent intent if we ever
+                                // want a tinted version
+
+    var body: some View {
+        Image("AppLogo")
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+    }
+}
+
 private struct RestPill: View {
     let vm: WorkoutVM
     var body: some View {
@@ -109,7 +161,7 @@ private struct RestPill: View {
             HStack(spacing: 6) {
                 Image(systemName: "timer")
                     .font(.caption2.weight(.bold))
-                    .foregroundStyle(brandOrange)
+                    .foregroundStyle(vm.accent)
                 Text(timerInterval: Date()...vm.restEnd, countsDown: true)
                     .font(.system(.subheadline, design: .rounded).monospacedDigit().weight(.bold))
                     .foregroundStyle(.primary)
@@ -119,7 +171,7 @@ private struct RestPill: View {
             .padding(.vertical, 5)
             .background(
                 RoundedRectangle(cornerRadius: 8)
-                    .stroke(brandOrange, lineWidth: 1)
+                    .stroke(vm.accent, lineWidth: 1)
             )
         }
     }
@@ -173,7 +225,7 @@ private struct SetLogStrip: View {
                     i < vm.setLines.count ? .done(vm.setLines[i])
                     : i == vm.setLines.count ? .current
                     : .pending
-                SetTile(state: state)
+                SetTile(state: state, accent: vm.accent)
             }
         }
         .frame(height: SetTileMetrics.height)
@@ -190,12 +242,13 @@ private struct SetLogStrip: View {
 /// workout shows a tidy row of progress markers — never overflowing.
 private struct SetTile: View {
     let state: SetTileState
+    let accent: Color
 
     var body: some View {
         let fg: Color = {
             switch state {
             case .done:    return .primary
-            case .current: return brandOrange
+            case .current: return accent
             case .pending: return .secondary
             }
         }()
@@ -207,7 +260,7 @@ private struct SetTile: View {
         }()
         let borderColor: Color = {
             switch state {
-            case .current: return brandOrange
+            case .current: return accent
             default:       return .white.opacity(0.12)
             }
         }()
@@ -270,7 +323,7 @@ private struct SetTile: View {
                 .font(.system(size: 11, weight: .bold))
         case .current:
             Circle()
-                .fill(brandOrange)
+                .fill(accent)
                 .frame(width: 6, height: 6)
         case .pending:
             Circle()
@@ -313,9 +366,7 @@ private struct LockScreenView: View {
             // Top row: set label + rest countdown.
             HStack(alignment: .center) {
                 HStack(spacing: 8) {
-                    Image(systemName: "dumbbell.fill")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(brandOrange)
+                    AppGlyph(size: 16, accent: vm.accent)
                     Text(vm.setLabel.uppercased())
                         .font(.system(size: 13, weight: .heavy))
                         .tracking(1.4)
@@ -383,10 +434,12 @@ struct WorkoutLiveActivity: Widget {
             let vm = WorkoutVM.load(from: context.attributes)
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Label("\(vm.setIndex)/\(vm.targetSets)",
-                          systemImage: "dumbbell.fill")
-                        .font(.caption.weight(.heavy))
-                        .foregroundStyle(brandOrange)
+                    HStack(spacing: 4) {
+                        AppGlyph(size: 14, accent: vm.accent)
+                        Text("\(vm.setIndex)/\(vm.targetSets)")
+                            .font(.caption.weight(.heavy))
+                            .foregroundStyle(vm.accent)
+                    }
                 }
                 DynamicIslandExpandedRegion(.trailing) {
                     if vm.hasRest {
@@ -395,7 +448,7 @@ struct WorkoutLiveActivity: Widget {
                                 .font(.system(.caption, design: .rounded).monospacedDigit().weight(.bold))
                         } icon: {
                             Image(systemName: "timer")
-                                .foregroundStyle(brandOrange)
+                                .foregroundStyle(vm.accent)
                         }
                     } else {
                         Text("\(vm.exerciseIndex)/\(vm.totalExercises)")
@@ -413,8 +466,7 @@ struct WorkoutLiveActivity: Widget {
                     }
                 }
             } compactLeading: {
-                Image(systemName: "dumbbell.fill")
-                    .foregroundStyle(brandOrange)
+                AppGlyph(size: 16, accent: vm.accent)
             } compactTrailing: {
                 if vm.hasRest {
                     Text(timerInterval: Date()...vm.restEnd, countsDown: true)
@@ -429,8 +481,7 @@ struct WorkoutLiveActivity: Widget {
                     Text(timerInterval: Date()...vm.restEnd, countsDown: true)
                         .font(.caption2.monospacedDigit())
                 } else {
-                    Image(systemName: "dumbbell.fill")
-                        .foregroundStyle(brandOrange)
+                    AppGlyph(size: 14, accent: vm.accent)
                 }
             }
         }

@@ -52,7 +52,13 @@ class _StartWorkoutScreenState extends ConsumerState<StartWorkoutScreen> {
                     const SizedBox(height: LsGap.loose),
                     LsButton(
                       label: 'GO TO PROGRAMS',
-                      onPressed: () => context.go('/programs'),
+                      // pushReplacement swaps /workout/start out of the
+                      // back stack for /programs. The user came from home,
+                      // so the resulting stack is [Home, Programs] — once
+                      // they finish creating a program, hitting back lands
+                      // them on Home (matching their mental model) rather
+                      // than circling back through this empty-state screen.
+                      onPressed: () => context.pushReplacement('/programs'),
                       minHeight: LsBox.fab,
                     ),
                   ],

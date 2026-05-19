@@ -81,6 +81,10 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
   late int _rir;
   late double _weightDisplay;
   late double _weightStep;
+  // Tracks the unit the wheel was last built against so we can detect
+  // mid-sheet switches (rare, but the user CAN flip kg/lb in settings while
+  // the sheet is open) and refit the picker.
+  WeightUnit? _builtForUnit;
 
   final _repsCtrl = FixedExtentScrollController();
   final _weightCtrl = FixedExtentScrollController();
@@ -101,6 +105,7 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
     // Per-exercise step (kg) wins; otherwise fall back to the unit default.
     final stepKg = widget.exercise.weightStepKg ?? WeightUnit.kg.defaultStep;
     _weightStep = _stepInUnit(stepKg, unit);
+    _builtForUnit = unit;
     final raw = WeightConv.fromKg(defaultKg, unit);
     _weightDisplay = (raw / _weightStep).round() * _weightStep;
     _weightDisplay = _weightDisplay.clamp(0, _weightRangeMax(unit));
@@ -138,6 +143,24 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
     final weightCount = (_weightRangeMax(unit) / _weightStep).round() + 1;
     final t = LsTheme.of(context);
 
+    // If the user flips the unit setting while the sheet is open, snap the
+    // wheel step over so the picker stays in the same number-system.
+    if (_builtForUnit != unit) {
+      _builtForUnit = unit;
+      // Re-derive a sane step in the new unit closest to the previous one.
+      _weightStep = unit == WeightUnit.kg
+          ? WeightUnit.kg.defaultStep
+          : WeightUnit.lb.defaultStep;
+      _weightDisplay =
+          (_weightDisplay / _weightStep).round() * _weightStep;
+      _weightDisplay = _weightDisplay.clamp(0.0, _weightRangeMax(unit));
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _weightCtrl.jumpToItem((_weightDisplay / _weightStep).round());
+        }
+      });
+    }
+
     final eyebrow = widget.titleOverride.isNotEmpty
         ? widget.titleOverride
         : 'SET ${widget.setNumber}';
@@ -166,7 +189,34 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
             ),
           ],
         ),
-        const SizedBox(height: LsGap.tight),
+        const SizedBox(height: LsGap.sub),
+        // Per-set step cycler. Sometimes the lifter wants finer (0.5kg
+        // micro-adjustments on dumbbells) or coarser (5kg jumps on a smith
+        // bench machine) than the program default. Tap to cycle.
+        Row(
+          children: [
+            const Spacer(),
+            InlineWeightStepCycler(
+              unit: unit,
+              current: _weightStep,
+              onChanged: (s) {
+                setState(() {
+                  final old = _weightDisplay;
+                  _weightStep = s;
+                  _weightDisplay =
+                      (old / _weightStep).round() * _weightStep;
+                  _weightDisplay =
+                      _weightDisplay.clamp(0.0, _weightRangeMax(unit));
+                });
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  if (!mounted) return;
+                  _weightCtrl
+                      .jumpToItem((_weightDisplay / _weightStep).round());
+                });
+              },
+            ),
+          ],
+        ),
         const SizedBox(height: LsGap.section),
         SizedBox(
           height: 260,

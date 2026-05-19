@@ -16,9 +16,13 @@ import '../application/active_workout_controller.dart';
 import '../application/rest_timer_controller.dart';
 import '../domain/active_session.dart';
 import '../domain/workout_set.dart';
+import '../../history/application/history_provider.dart';
+import '../../home/application/home_provider.dart';
+import '../../stats/application/stats_provider.dart';
 import 'program_status_sheet.dart';
 import 'rest_timer_banner.dart';
 import 'set_log_sheet.dart';
+import 'swap_exercise_button.dart';
 
 class ActiveWorkoutScreen extends ConsumerStatefulWidget {
   const ActiveWorkoutScreen({super.key});
@@ -80,8 +84,19 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
               ),
               child: _HeaderRow(
                 elapsed: elapsed,
-                onClose: () => _confirmExit(session),
                 onProgram: () => showProgramStatusSheet(context),
+                // The leading slot in the header was an empty placeholder
+                // (kept only to optically center the elapsed timer). It
+                // now holds the swap/edit button for the current exercise.
+                // When the workout is finished (`current == null`) we
+                // hand back `null` and the header falls back to a SizedBox
+                // placeholder so the timer stays centered.
+                leading: current == null
+                    ? null
+                    : SwapExerciseButton(
+                        queueIdx: session.cursor.exerciseIdx,
+                        exercise: current,
+                      ),
               ),
             ),
             const RestTimerBanner(),
@@ -164,7 +179,9 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                     ],
                   ),
                   const SizedBox(height: LsGap.sub),
-                  // Big exercise name.
+                  // Big exercise name. The swap/edit affordance now lives
+                  // in the header bar's leading slot — keeps this column
+                  // visually clean and gives the title its full width back.
                   Text(
                     current.exerciseName.toUpperCase(),
                     style: LsType.displayXL.copyWith(
@@ -175,6 +192,13 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
+                  if (current.isOverridden &&
+                      current.previousExerciseId != null) ...[
+                    const SizedBox(height: 6),
+                    _SubstitutedBadge(
+                      previousExerciseId: current.previousExerciseId!,
+                    ),
+                  ],
                   const SizedBox(height: LsGap.section),
                   // Meta pills row — bold numbers, regular label.
                   Wrap(
@@ -201,6 +225,26 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                     ],
                   ),
                   const SizedBox(height: LsGap.loose),
+                  // When the slot has been substituted AND the user already
+                  // logged sets under the previous exercise, surface that
+                  // count so they aren't surprised by the set chips
+                  // restarting at 0. The pre-swap sets remain in their
+                  // history under the old name; this is just a hint.
+                  if (current.isOverridden &&
+                      current.previousExerciseId != null &&
+                      session.loggedSets.any(
+                        (s) => s.exerciseId == current.previousExerciseId,
+                      )) ...[
+                    _PreviousSetsBanner(
+                      previousExerciseId: current.previousExerciseId!,
+                      count: session.loggedSets
+                          .where(
+                            (s) => s.exerciseId == current.previousExerciseId,
+                          )
+                          .length,
+                    ),
+                    const SizedBox(height: LsGap.sub),
+                  ],
                   // Set chips row — horizontally scrollable when the count
                   // outruns the available width.
                   _SetChipsRow(
@@ -411,6 +455,7 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     } else if (action == 'discard') {
       _exiting = true;
       await ref.read(activeSessionProvider.notifier).abandon();
+      _invalidateHistoryProviders();
       if (mounted) context.go('/');
     }
   }
@@ -419,6 +464,7 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     _exiting = true;
     ref.read(restTimerProvider.notifier).dismiss();
     final sid = await ref.read(activeSessionProvider.notifier).finish();
+    _invalidateHistoryProviders();
     if (!mounted) return;
     if (sid != null) {
       context.go('/workout/summary/$sid');
@@ -426,17 +472,38 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
       context.go('/');
     }
   }
+
+  /// Hand-rolled cache bust for every provider that aggregates completed
+  /// sessions. Without this, the home strip ("LAST · N SETS · …"), the
+  /// History list, and the Stats charts keep showing yesterday's numbers
+  /// until the app is restarted — because none of them watch session
+  /// status changes directly. We invalidate at the navigation moment so
+  /// the next screen always reads fresh.
+  void _invalidateHistoryProviders() {
+    ref.invalidate(lastSessionSummaryProvider);
+    ref.invalidate(historyListProvider);
+    ref.invalidate(loggedExercisesProvider);
+    // Family invalidation drops every cached `(exerciseId)` instance — the
+    // stats screen will refetch progression points for whichever exercise
+    // the user picks next.
+    ref.invalidate(exerciseProgressionProvider);
+  }
 }
 
 class _HeaderRow extends StatelessWidget {
   const _HeaderRow({
     required this.elapsed,
-    required this.onClose,
     required this.onProgram,
+    this.leading,
   });
   final Duration elapsed;
-  final VoidCallback onClose;
   final VoidCallback onProgram;
+
+  /// Optional widget in the leading slot — currently the per-exercise
+  /// swap/edit button. When `null` (e.g. the workout is finished), a
+  /// matching SizedBox keeps the elapsed timer optically centered
+  /// against the program button on the right.
+  final Widget? leading;
 
   @override
   Widget build(BuildContext context) {
@@ -444,7 +511,11 @@ class _HeaderRow extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
-        LsIconSquare(icon: Icons.close, onTap: onClose, semanticLabel: 'Exit'),
+        leading ??
+            const SizedBox(
+              width: LsBox.topbarIcon,
+              height: LsBox.topbarIcon,
+            ),
         const Spacer(),
         Column(
           children: [
@@ -661,6 +732,84 @@ class _DashedBoxPainter extends BoxPainter {
       }
     }
     return dest;
+  }
+}
+
+/// Small accent-tinted text shown below the exercise title when the active
+/// slot has been substituted. Resolves the previous exercise's name lazily
+/// via `exerciseNameProvider`; renders nothing while the name is still
+/// loading (the badge would briefly read "SUBSTITUTED · WAS —" otherwise,
+/// which feels glitchy on a sub-100ms lookup).
+class _SubstitutedBadge extends ConsumerWidget {
+  const _SubstitutedBadge({required this.previousExerciseId});
+  final String previousExerciseId;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
+    final name = ref.watch(exerciseNameProvider(previousExerciseId)).value;
+    if (name == null) return const SizedBox.shrink();
+    return Text(
+      'SUBSTITUTED · WAS ${name.toUpperCase()}',
+      style: LsType.monoMicro.copyWith(color: t.accent.accent),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+/// Banner above the set chips row that surfaces sets logged at this slot
+/// before the user swapped exercises. Without it, the chip count restarts
+/// at 0/N and the pre-swap sets vanish from the card (they live in the
+/// summary under the original exercise) — confusing if you just did 2 sets
+/// and switched machines. This is informational only; tapping doesn't do
+/// anything in v1.
+class _PreviousSetsBanner extends ConsumerWidget {
+  const _PreviousSetsBanner({
+    required this.previousExerciseId,
+    required this.count,
+  });
+  final String previousExerciseId;
+  final int count;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final t = LsTheme.of(context);
+    final name = ref.watch(exerciseNameProvider(previousExerciseId)).value;
+    final label = name == null
+        ? 'PREVIOUSLY LOGGED $count SET${count == 1 ? '' : 'S'}'
+        : 'PREVIOUSLY $count SET${count == 1 ? '' : 'S'} ON ${name.toUpperCase()}';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: t.surface.surface2,
+        borderRadius: BorderRadius.circular(LsRadius.r2),
+        border: Border.all(color: t.surface.border),
+      ),
+      // crossAxisAlignment.start so the history icon stays anchored to
+      // the first line when the label wraps to two lines on long
+      // exercise names ("Shoulder Press (Smith Machine)" etc.).
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            // 2pt nudge to optically align the icon with the first text
+            // line — Material icons sit slightly above their baseline.
+            padding: const EdgeInsets.only(top: 2),
+            child: Icon(Icons.history, size: 16, color: t.surface.text2),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: LsType.monoMeta.copyWith(color: t.surface.text2),
+              // No maxLines / overflow: the container grows to fit the
+              // full label even on very long previous-exercise names.
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 

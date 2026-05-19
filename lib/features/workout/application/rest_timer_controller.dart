@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
+import '../../../core/theme/app_theme.dart';
 import 'active_workout_controller.dart';
 import 'live_activity_controller.dart';
 
@@ -84,9 +85,11 @@ class RestTimerController extends Notifier<RestTimerState> {
     final session = ref.read(activeSessionProvider).value;
     if (session == null) return;
     final unit = settings.unit ?? WeightUnit.kg;
+    final accent = lsAccentSpec(settings.accent);
     ref.read(liveActivityControllerProvider).update(
           session: session,
           unit: unit,
+          accent: accent,
           restEndsAt: state.running ? state.endsAt : null,
         );
   }
