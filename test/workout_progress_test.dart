@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:literally_simplest_gym_tracker/features/workout/application/workout_progress.dart';
-import 'package:literally_simplest_gym_tracker/features/workout/domain/active_session.dart';
-import 'package:literally_simplest_gym_tracker/features/workout/domain/workout_set.dart';
+import 'package:ls_workout_tracker/features/workout/application/workout_progress.dart';
+import 'package:ls_workout_tracker/features/workout/domain/active_session.dart';
+import 'package:ls_workout_tracker/features/workout/domain/workout_set.dart';
 
 PlannedExercise _ex(String id, {int sets = 3}) => PlannedExercise(
       programExerciseId: 'pe-$id',

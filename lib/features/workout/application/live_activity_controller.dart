@@ -13,7 +13,7 @@ import 'workout_progress.dart';
 
 /// App Group identifier shared between the Runner app and the Widget
 /// Extension. Must match the Group ID configured in Xcode for both targets.
-const liveActivityAppGroup = 'group.com.berke.literallySimplestGymTracker';
+const liveActivityAppGroup = 'group.com.berkeucvet.lsWorkoutTracker';
 
 class LiveActivityController {
   LiveActivityController();

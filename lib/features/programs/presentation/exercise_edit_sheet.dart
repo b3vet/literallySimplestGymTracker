@@ -192,10 +192,12 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
     // wheel starts on the right row regardless of when the pickers first
     // mount (see the comment near the field declarations).
     _setsCtrl = FixedExtentScrollController(initialItem: _sets - _setsMin);
-    _repsMinCtrl =
-        FixedExtentScrollController(initialItem: _repsMinVal - _repsMin);
-    _repsMaxCtrl =
-        FixedExtentScrollController(initialItem: _repsMaxVal - _repsMin);
+    _repsMinCtrl = FixedExtentScrollController(
+      initialItem: _repsMinVal - _repsMin,
+    );
+    _repsMaxCtrl = FixedExtentScrollController(
+      initialItem: _repsMaxVal - _repsMin,
+    );
     _weightCtrl = FixedExtentScrollController(
       initialItem: (_weightDisplay / _weightStep).round(),
     );
@@ -312,37 +314,39 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
     final options = _options(_name.value, mergedNames).toList(growable: false);
     final showDropdown = _nameFocus.hasFocus && options.isNotEmpty;
 
-    // Two render modes:
-    //   • Typing mode (dropdown showing): eyebrow + textfield + a dropdown
-    //     that fills the *remaining* sheet height via Flexible. Pickers /
-    //     save / delete are hidden — they wouldn't fit alongside the
-    //     dropdown when the keyboard is up, and exposing their labels
-    //     under the dropdown ("SETS · REP MIN · …") just confuses the user
-    //     about which list those labels belong to.
-    //   • Editing mode (textfield blurred / no matches): the full form
-    //     renders inside a shrink-wrapping ListView that scrolls if the
-    //     form would overflow the available sheet height.
-    if (showDropdown) {
-      return Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: LsGap.tight),
-          EyebrowLabel(
-            widget.initialName.isEmpty ? 'ADD EXERCISE' : 'EDIT EXERCISE',
-          ),
+    // **Unified tree** — eyebrow, _NameField, then EITHER the dropdown OR
+    // the form, both wrapped in `Flexible(loose)` so they consume the
+    // remaining sheet height. The two modes used to live in two completely
+    // different roots (`Column` vs `ListView`); switching between them
+    // recreated the `_NameField` element, which detached its EditableText
+    // from the IME for one frame. iOS interprets that as "no text input
+    // client right now" and dismisses the keyboard. Users saw the
+    // keyboard flash off whenever the dropdown appeared/disappeared
+    // (first-mount autofocus race, and the "delete one char of an exact
+    // match" case). With a single Column root, `_NameField` keeps the
+    // same element identity across mode toggles — focus + IME survive.
+    //
+    // The remaining-space child below `_NameField` is what swaps:
+    //   • Typing mode (dropdown showing): `_NameOptionsList`.
+    //   • Editing mode (no dropdown): the form (pickers + weight step +
+    //     save + delete? + revert?) inside a `SingleChildScrollView` so
+    //     it scrolls when the keyboard eats into the available height.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: LsGap.tight),
+        EyebrowLabel(
+          widget.initialName.isEmpty ? 'ADD EXERCISE' : 'EDIT EXERCISE',
+        ),
+        const SizedBox(height: LsGap.sub),
+        _NameField(
+          controller: _name,
+          focusNode: _nameFocus,
+          onChanged: () => setState(() {}),
+        ),
+        if (showDropdown) ...[
           const SizedBox(height: LsGap.sub),
-          _NameField(
-            controller: _name,
-            focusNode: _nameFocus,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: LsGap.sub),
-          // Flexible(loose) hands the dropdown whatever vertical space is
-          // left over after the eyebrow + textfield, with maxHeight
-          // computed by Flutter's layout pass. The dropdown's ListView
-          // fills the allotted space (and scrolls internally if more
-          // options exist than fit).
           Flexible(
             fit: FlexFit.loose,
             child: _NameOptionsList(
@@ -358,196 +362,201 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
               },
             ),
           ),
-        ],
-      );
-    }
-
-    return ListView(
-      shrinkWrap: true,
-      physics: const ClampingScrollPhysics(),
-      children: [
-          const SizedBox(height: LsGap.tight),
-          EyebrowLabel(
-            widget.initialName.isEmpty ? 'ADD EXERCISE' : 'EDIT EXERCISE',
-          ),
-          const SizedBox(height: LsGap.sub),
-          _NameField(
-            controller: _name,
-            focusNode: _nameFocus,
-            onChanged: () => setState(() {}),
-          ),
-          const SizedBox(height: LsGap.loose),
-          SizedBox(
-            height: 240,
-            child: Row(
-              children: [
-                Expanded(
-                  child: PickerColumn(
-                    label: 'SETS',
-                    controller: _setsCtrl,
-                    itemCount: _setsMax - _setsMin + 1,
-                    builder: (i, sel) =>
-                        PickerText('${i + _setsMin}', selected: sel),
-                    onChanged: (i) {
-                      setState(() {
-                        _sets = i + _setsMin;
-                        _userTouchedSets = true;
-                      });
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: PickerColumn(
-                    label: 'REP MIN',
-                    controller: _repsMinCtrl,
-                    itemCount: _repsMax - _repsMin + 1,
-                    builder: (i, sel) =>
-                        PickerText('${i + _repsMin}', selected: sel),
-                    onChanged: (i) {
-                      setState(() {
-                        _repsMinVal = i + _repsMin;
-                        _userTouchedRepsMin = true;
-                        if (_repsMaxVal < _repsMinVal) {
-                          _repsMaxVal = _repsMinVal;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              _repsMaxCtrl
-                                  .jumpToItem(_repsMaxVal - _repsMin);
-                            }
-                          });
-                        }
-                      });
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: PickerColumn(
-                    label: 'REP MAX',
-                    controller: _repsMaxCtrl,
-                    itemCount: _repsMax - _repsMin + 1,
-                    builder: (i, sel) =>
-                        PickerText('${i + _repsMin}', selected: sel),
-                    onChanged: (i) {
-                      setState(() {
-                        _repsMaxVal = i + _repsMin;
-                        _userTouchedRepsMax = true;
-                        if (_repsMaxVal < _repsMinVal) {
-                          _repsMinVal = _repsMaxVal;
-                          WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted) {
-                              _repsMinCtrl
-                                  .jumpToItem(_repsMinVal - _repsMin);
-                            }
-                          });
-                        }
-                      });
-                    },
-                  ),
-                ),
-                Expanded(
-                  child: PickerColumn(
-                    label: 'WT',
-                    unitSuffix: unit.short,
-                    controller: _weightCtrl,
-                    itemCount: weightCount,
-                    builder: (i, sel) => PickerText(
-                      _formatWeightLabel(i * _weightStep, unit),
-                      selected: sel,
+        ] else
+          Flexible(
+            fit: FlexFit.loose,
+            child: SingleChildScrollView(
+              physics: const ClampingScrollPhysics(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: LsGap.loose),
+                  SizedBox(
+                    height: 240,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'SETS',
+                            controller: _setsCtrl,
+                            itemCount: _setsMax - _setsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _setsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _sets = i + _setsMin;
+                                _userTouchedSets = true;
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'REP MIN',
+                            controller: _repsMinCtrl,
+                            itemCount: _repsMax - _repsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _repsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _repsMinVal = i + _repsMin;
+                                _userTouchedRepsMin = true;
+                                if (_repsMaxVal < _repsMinVal) {
+                                  _repsMaxVal = _repsMinVal;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      _repsMaxCtrl.jumpToItem(
+                                        _repsMaxVal - _repsMin,
+                                      );
+                                    }
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'REP MAX',
+                            controller: _repsMaxCtrl,
+                            itemCount: _repsMax - _repsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _repsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _repsMaxVal = i + _repsMin;
+                                _userTouchedRepsMax = true;
+                                if (_repsMaxVal < _repsMinVal) {
+                                  _repsMinVal = _repsMaxVal;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      _repsMinCtrl.jumpToItem(
+                                        _repsMinVal - _repsMin,
+                                      );
+                                    }
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'WT',
+                            unitSuffix: unit.short,
+                            controller: _weightCtrl,
+                            itemCount: weightCount,
+                            builder: (i, sel) => PickerText(
+                              _formatWeightLabel(i * _weightStep, unit),
+                              selected: sel,
+                            ),
+                            onChanged: (i) {
+                              setState(() {
+                                _weightDisplay = i * _weightStep;
+                                _userTouchedWeight = true;
+                              });
+                            },
+                          ),
+                        ),
+                      ],
                     ),
-                    onChanged: (i) {
+                  ),
+                  const SizedBox(height: LsGap.loose),
+                  EyebrowLabel('WEIGHT STEP'),
+                  const SizedBox(height: LsGap.sub),
+                  WeightStepToggle(
+                    unit: unit,
+                    current: _weightStep,
+                    onChanged: (s) {
+                      final oldValue = _weightDisplay;
                       setState(() {
-                        _weightDisplay = i * _weightStep;
-                        _userTouchedWeight = true;
+                        _weightStep = s;
+                        _weightDisplay =
+                            (oldValue / _weightStep).round() * _weightStep;
+                      });
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        if (!mounted) return;
+                        _weightCtrl.jumpToItem(
+                          (_weightDisplay / _weightStep).round(),
+                        );
                       });
                     },
                   ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: LsGap.loose),
-          EyebrowLabel('WEIGHT STEP'),
-          const SizedBox(height: LsGap.sub),
-          WeightStepToggle(
-            unit: unit,
-            current: _weightStep,
-            onChanged: (s) {
-              final oldValue = _weightDisplay;
-              setState(() {
-                _weightStep = s;
-                _weightDisplay =
-                    (oldValue / _weightStep).round() * _weightStep;
-              });
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                if (!mounted) return;
-                _weightCtrl
-                    .jumpToItem((_weightDisplay / _weightStep).round());
-              });
-            },
-          ),
-          const SizedBox(height: LsGap.loose),
-          LsButton(
-            label: 'SAVE',
-            onPressed: _save,
-            expand: true,
-            minHeight: LsBox.cta,
-          ),
-          if (widget.canDelete) ...[
-            const SizedBox(height: LsGap.sub),
-            TextButton(
-              onPressed: () => Navigator.pop(
-                context,
-                ExerciseEditResult(
-                  name: _name.text,
-                  sets: 0,
-                  repsMin: 0,
-                  repsMax: 0,
-                  weightKg: 0,
-                  weightStepKg: _weightStep,
-                  delete: true,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-              ),
-              child: Text(
-                'DELETE',
-                style: LsType.button.copyWith(color: LsSignals.danger),
-              ),
-            ),
-          ],
-          if (widget.canRevert) ...[
-            const SizedBox(height: LsGap.sub),
-            TextButton(
-              // The other fields are filled with the current display values
-              // so callers that ignore `revert` and just persist the result
-              // still get a sane row, but the canonical reading is "look at
-              // `revert` first; if true, drop the override".
-              onPressed: () => Navigator.pop(
-                context,
-                ExerciseEditResult(
-                  name: _name.text,
-                  sets: _sets,
-                  repsMin: _repsMinVal,
-                  repsMax: _repsMaxVal,
-                  weightKg: WeightConv.toKg(_weightDisplay, widget.unit),
-                  weightStepKg: _weightStep,
-                  revert: true,
-                ),
-              ),
-              style: TextButton.styleFrom(
-                minimumSize: const Size.fromHeight(48),
-              ),
-              child: Text(
-                'REVERT TO PLAN',
-                style: LsType.button.copyWith(
-                  color: LsTheme.of(context).surface.text2,
-                ),
+                  const SizedBox(height: LsGap.loose),
+                  LsButton(
+                    label: 'SAVE',
+                    onPressed: _save,
+                    expand: true,
+                    minHeight: LsBox.cta,
+                  ),
+                  if (widget.canDelete) ...[
+                    const SizedBox(height: LsGap.sub),
+                    TextButton(
+                      onPressed: () => Navigator.pop(
+                        context,
+                        ExerciseEditResult(
+                          name: _name.text,
+                          sets: 0,
+                          repsMin: 0,
+                          repsMax: 0,
+                          weightKg: 0,
+                          weightStepKg: _weightStep,
+                          delete: true,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                      child: Text(
+                        'DELETE',
+                        style: LsType.button.copyWith(color: LsSignals.danger),
+                      ),
+                    ),
+                  ],
+                  if (widget.canRevert) ...[
+                    const SizedBox(height: LsGap.sub),
+                    TextButton(
+                      // The other fields are filled with the current display
+                      // values so callers that ignore `revert` and just
+                      // persist the result still get a sane row, but the
+                      // canonical reading is "look at `revert` first; if
+                      // true, drop the override".
+                      onPressed: () => Navigator.pop(
+                        context,
+                        ExerciseEditResult(
+                          name: _name.text,
+                          sets: _sets,
+                          repsMin: _repsMinVal,
+                          repsMax: _repsMaxVal,
+                          weightKg: WeightConv.toKg(
+                            _weightDisplay,
+                            widget.unit,
+                          ),
+                          weightStepKg: _weightStep,
+                          revert: true,
+                        ),
+                      ),
+                      style: TextButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                      child: Text(
+                        'REVERT TO PLAN',
+                        style: LsType.button.copyWith(
+                          color: LsTheme.of(context).surface.text2,
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: LsGap.tight),
+                ],
               ),
             ),
-          ],
-          const SizedBox(height: LsGap.tight),
-        ],
+          ),
+      ],
     );
   }
 
@@ -707,26 +716,26 @@ class _NameOptionsList extends StatelessWidget {
         child: ListView.separated(
           padding: const EdgeInsets.symmetric(vertical: 4),
           itemCount: options.length,
-            separatorBuilder: (_, _) =>
-                Divider(height: 1, color: t.surface.border),
-            itemBuilder: (ctx, i) {
-              final opt = options[i];
-              return InkWell(
-                onTap: () => onPick(opt),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 14,
-                  ),
-                  child: Text(
-                    opt.toUpperCase(),
-                    style: LsType.displayS.copyWith(color: t.surface.text),
-                  ),
+          separatorBuilder: (_, _) =>
+              Divider(height: 1, color: t.surface.border),
+          itemBuilder: (ctx, i) {
+            final opt = options[i];
+            return InkWell(
+              onTap: () => onPick(opt),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 14,
                 ),
-              );
-            },
-          ),
+                child: Text(
+                  opt.toUpperCase(),
+                  style: LsType.displayS.copyWith(color: t.surface.text),
+                ),
+              ),
+            );
+          },
         ),
+      ),
     );
   }
 }

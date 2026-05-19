@@ -1,7 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:literally_simplest_gym_tracker/core/db/migrations.dart';
-import 'package:literally_simplest_gym_tracker/features/programs/data/program_dao.dart';
-import 'package:literally_simplest_gym_tracker/features/workout/data/workout_dao.dart';
+import 'package:ls_workout_tracker/core/db/migrations.dart';
+import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
+import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 Future<Database> _openInMemory() async {

@@ -19,7 +19,7 @@ project file format and editing it externally is fragile.
 2. **File → New → Target…** and pick **Widget Extension**. Click *Next*.
 3. Set:
    - **Product Name**: `WorkoutLiveActivity`
-   - **Bundle Identifier**: `com.berke.literallySimplestGymTracker.WorkoutLiveActivity`
+   - **Bundle Identifier**: `com.berkeucvet.lsWorkoutTracker.WorkoutLiveActivity`
      (must be the main app bundle ID + `.WorkoutLiveActivity`)
    - **Include Live Activity**: **checked**
    - **Include Configuration Intent**: unchecked
@@ -49,7 +49,7 @@ project file format and editing it externally is fragile.
    `WorkoutLiveActivity/Info.plist`.
 8. **App Group capability** (required by the `live_activities` plugin):
    - Select the *Runner* target → **Signing & Capabilities** → **+ Capability**
-     → **App Groups** → add `group.com.berke.literallySimplestGymTracker`.
+     → **App Groups** → add `group.com.berkeucvet.lsWorkoutTracker`.
    - Select the *WorkoutLiveActivity* target → same capability with the
      same group ID.
    - This ID must match `liveActivityAppGroup` in

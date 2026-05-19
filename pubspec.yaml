@@ -1,5 +1,5 @@
-name: literally_simplest_gym_tracker
-description: "Literally Simplest Gym Tracker — plan programs, log sets between sets, watch progress."
+name: ls_workout_tracker
+description: "LS Workout Tracker — plan programs, log sets between sets, watch progress."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev

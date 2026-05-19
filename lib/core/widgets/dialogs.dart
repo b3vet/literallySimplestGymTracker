@@ -18,53 +18,69 @@ Future<String?> promptName(
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
+    useSafeArea: true,
     backgroundColor: Colors.transparent,
+    // Same wrapper pattern as `showExerciseEditSheet` — Flutter's
+    // `showModalBottomSheet` does NOT apply `viewInsets.bottom` itself, so
+    // without this Padding the sheet stays anchored at the bottom and the
+    // keyboard covers it. Capping height to `screen.height - safeTop
+    // - viewInsets.bottom` keeps the sheet from sailing off the top of
+    // the screen when the keyboard is open.
     builder: (ctx) {
       final t = LsTheme.of(ctx);
-      return LsSheet(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            EyebrowLabel(title.toUpperCase()),
-            const SizedBox(height: LsGap.section),
-            TextField(
-              controller: controller,
-              autofocus: true,
-              textCapitalization: TextCapitalization.words,
-              style: LsType.displayM.copyWith(
-                color: t.surface.text,
-                fontSize: 28,
-              ),
-              decoration: InputDecoration(
-                hintText: hint.toUpperCase(),
-                hintStyle: LsType.displayM.copyWith(
-                  color: t.surface.text3,
-                  fontSize: 28,
-                ),
-              ),
-            ),
-            const SizedBox(height: LsGap.loose),
-            Row(
+      final mq = MediaQuery.of(ctx);
+      return Padding(
+        padding: EdgeInsets.only(bottom: mq.viewInsets.bottom),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: mq.size.height - mq.padding.top - mq.viewInsets.bottom,
+          ),
+          child: LsSheet(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Expanded(
-                  child: LsButton(
-                    label: 'Cancel',
-                    variant: LsButtonVariant.ghost,
-                    onPressed: () => Navigator.pop(ctx),
+                EyebrowLabel(title.toUpperCase()),
+                const SizedBox(height: LsGap.section),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.words,
+                  style: LsType.displayM.copyWith(
+                    color: t.surface.text,
+                    fontSize: 28,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: hint.toUpperCase(),
+                    hintStyle: LsType.displayM.copyWith(
+                      color: t.surface.text3,
+                      fontSize: 28,
+                    ),
                   ),
                 ),
-                const SizedBox(width: LsGap.inline),
-                Expanded(
-                  child: LsButton(
-                    label: 'Save',
-                    onPressed: () =>
-                        Navigator.pop(ctx, controller.text.trim()),
-                  ),
+                const SizedBox(height: LsGap.loose),
+                Row(
+                  children: [
+                    Expanded(
+                      child: LsButton(
+                        label: 'Cancel',
+                        variant: LsButtonVariant.ghost,
+                        onPressed: () => Navigator.pop(ctx),
+                      ),
+                    ),
+                    const SizedBox(width: LsGap.inline),
+                    Expanded(
+                      child: LsButton(
+                        label: 'Save',
+                        onPressed: () =>
+                            Navigator.pop(ctx, controller.text.trim()),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
-          ],
+          ),
         ),
       );
     },

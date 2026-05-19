@@ -29,7 +29,7 @@ extension LiveActivitiesAppAttributes {
 // lib/features/workout/application/live_activity_controller.dart and the
 // App Group capability ID configured on both targets in Xcode.
 let workoutSharedDefaults =
-    UserDefaults(suiteName: "group.com.berke.literallySimplestGymTracker")
+    UserDefaults(suiteName: "group.com.berkeucvet.lsWorkoutTracker")
 
 // MARK: - Decoded view-model
 

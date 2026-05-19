@@ -1,4 +1,4 @@
-package com.berke.literally_simplest_gym_tracker
+package com.berke.ls_workout_tracker
 
 import io.flutter.embedding.android.FlutterActivity
 
