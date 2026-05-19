@@ -58,49 +58,64 @@ class PickerColumn extends StatelessWidget {
           ),
         ),
         Expanded(
-          child: CupertinoPicker.builder(
-            scrollController: controller,
-            itemExtent: itemExtent,
-            useMagnifier: false,
-            squeeze: 1.0,
-            backgroundColor: Colors.transparent,
-            selectionOverlay: _SelectionBand(
-              color: t.accentDimBg,
-              borderColor: t.accent.accent.withValues(alpha: 0.7),
-            ),
-            onSelectedItemChanged: (i) {
-              HapticFeedback.selectionClick();
-              onChanged(i);
-            },
-            childCount: itemCount,
-            itemBuilder: (context, i) {
-              final selected = i == controller.selectedItem;
-              return Center(child: builder(i, selected));
-            },
+          // Stack the band BEHIND the picker. We previously passed the band
+          // as `CupertinoPicker.selectionOverlay`, which (as the name
+          // implies) paints ON TOP of the selected item. In dark mode the
+          // band's `accentDimBg` is a translucent overlay
+          // (`accent.withOpacity(0.16)`) so the text bleeds through; in
+          // light mode it's the OPAQUE `accentDimSolidLight` (a pale tint
+          // designed for white surfaces) and it completely occludes the
+          // selected item's text — looked like a z-order bug because
+          // effectively it was one.
+          //
+          // Drawing the band first (under the picker) with a transparent
+          // picker background and an empty selectionOverlay keeps the
+          // visual identical to dark mode while letting the selected
+          // item's text sit in front of the band in every theme.
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              SizedBox(
+                height: itemExtent,
+                width: double.infinity,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: t.accentDimBg,
+                      borderRadius: BorderRadius.circular(LsRadius.r3),
+                      border: Border.all(
+                        color: t.accent.accent.withValues(alpha: 0.7),
+                        width: 1.4,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              CupertinoPicker.builder(
+                scrollController: controller,
+                itemExtent: itemExtent,
+                useMagnifier: false,
+                squeeze: 1.0,
+                backgroundColor: Colors.transparent,
+                // No overlay — the band is provided by the Stack
+                // underneath. SizedBox.shrink keeps Cupertino from
+                // painting its default selection hairlines.
+                selectionOverlay: const SizedBox.shrink(),
+                onSelectedItemChanged: (i) {
+                  HapticFeedback.selectionClick();
+                  onChanged(i);
+                },
+                childCount: itemCount,
+                itemBuilder: (context, i) {
+                  final selected = i == controller.selectedItem;
+                  return Center(child: builder(i, selected));
+                },
+              ),
+            ],
           ),
         ),
       ],
-    );
-  }
-}
-
-/// Custom selection band replacement (the default CupertinoPicker draws thin
-/// hairlines top + bottom; we want a filled accent rectangle instead).
-class _SelectionBand extends StatelessWidget {
-  const _SelectionBand({required this.color, required this.borderColor});
-  final Color color;
-  final Color borderColor;
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Container(
-        margin: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          color: color,
-          borderRadius: BorderRadius.circular(LsRadius.r3),
-          border: Border.all(color: borderColor, width: 1.4),
-        ),
-      ),
     );
   }
 }
@@ -116,9 +131,25 @@ class PickerText extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final t = LsTheme.of(context);
-    final color = selected
-        ? (accent ? t.accent.accent : t.surface.text)
-        : t.surface.text3;
+    // Contrast model:
+    //   • Dark mode → selection band is `accent.withOpacity(0.16)` painted
+    //     over a dark surface — looks like a dim tinted patch. Saturated
+    //     accent text (e.g. amber #FFB400) reads cleanly against that.
+    //   • Light mode → selection band is `accentDimSolidLight`, an opaque
+    //     pastel tint (e.g. cream #FFEFC2). Saturated accent text on top
+    //     would be "yellow on yellow / pink on pink / cyan on cyan" — not
+    //     readable. We swap to a surface-grey instead. `surface.text` is
+    //     pure near-black and grabs the eye too hard against a pale band;
+    //     `surface.text2` (#4A5057) stays readable but lets the band
+    //     remain the focal element, the way the dark-mode version does.
+    final Color color;
+    if (!selected) {
+      color = t.surface.text3;
+    } else if (!accent) {
+      color = t.surface.text;
+    } else {
+      color = t.isLight ? t.surface.text2 : t.accent.accent;
+    }
     final style = selected
         ? TextStyle(
             fontFamily: 'Antonio',

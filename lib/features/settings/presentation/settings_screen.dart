@@ -305,29 +305,51 @@ Future<int?> _pickRestSeconds(BuildContext context, int current) {
               const EyebrowLabel('DEFAULT REST'),
               const SizedBox(height: 10),
               Expanded(
-                child: CupertinoPicker(
-                  itemExtent: 48,
-                  useMagnifier: false,
-                  scrollController:
-                      FixedExtentScrollController(initialItem: initial),
-                  onSelectedItemChanged: (i) => selectedIndex = i,
-                  selectionOverlay: Container(
-                    margin: const EdgeInsets.symmetric(horizontal: 40),
-                    decoration: BoxDecoration(
-                      color: t.accentDimBg,
-                      borderRadius: BorderRadius.circular(LsRadius.r3),
-                      border: Border.all(color: t.accent.accent, width: 1.2),
-                    ),
-                  ),
+                // Band drawn as an underlay (see picker_column.dart for the
+                // full rationale). In light mode the `accentDimBg` is
+                // opaque, so passing it as `selectionOverlay` would hide
+                // the selected number completely.
+                child: Stack(
+                  alignment: Alignment.center,
                   children: [
-                    for (final v in options)
-                      Center(
-                        child: Text(
-                          v == 0 ? 'OFF' : '${v}s',
-                          style: LsType.monoNumeral
-                              .copyWith(color: t.surface.text, fontSize: 26),
+                    SizedBox(
+                      height: 48,
+                      width: double.infinity,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 40),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: t.accentDimBg,
+                            borderRadius: BorderRadius.circular(LsRadius.r3),
+                            border: Border.all(
+                              color: t.accent.accent,
+                              width: 1.2,
+                            ),
+                          ),
                         ),
                       ),
+                    ),
+                    CupertinoPicker(
+                      itemExtent: 48,
+                      useMagnifier: false,
+                      backgroundColor: Colors.transparent,
+                      scrollController:
+                          FixedExtentScrollController(initialItem: initial),
+                      onSelectedItemChanged: (i) => selectedIndex = i,
+                      selectionOverlay: const SizedBox.shrink(),
+                      children: [
+                        for (final v in options)
+                          Center(
+                            child: Text(
+                              v == 0 ? 'OFF' : '${v}s',
+                              style: LsType.monoNumeral.copyWith(
+                                color: t.surface.text2,
+                                fontSize: 26,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
                   ],
                 ),
               ),
