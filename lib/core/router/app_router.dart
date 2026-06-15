@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/history/presentation/history_screen.dart';
 import '../../features/history/presentation/session_detail_screen.dart';
 import '../../features/home/presentation/home_screen.dart';
-import '../../features/onboarding/presentation/unit_pick_screen.dart';
+import '../../features/onboarding/presentation/onboarding_screen.dart';
 import '../../features/programs/presentation/day_editor_screen.dart';
 import '../../features/programs/presentation/program_editor_screen.dart';
 import '../../features/programs/presentation/programs_list_screen.dart';
@@ -22,10 +22,16 @@ final appRouterProvider = Provider<GoRouter>((ref) {
   return GoRouter(
     initialLocation: '/',
     redirect: (context, state) {
-      final unit = ref.read(settingsProvider).unit;
-      final onboarding = state.matchedLocation == '/onboarding/unit';
-      if (unit == null && !onboarding) return '/onboarding/unit';
-      if (unit != null && onboarding) return '/';
+      final complete = ref.read(settingsProvider).onboardingComplete;
+      final onboarding = state.matchedLocation == '/onboarding';
+      if (!complete) {
+        // First run (or an interrupted one): force the wizard.
+        return onboarding ? null : '/onboarding';
+      }
+      // Onboarding done: never force the user *off* /onboarding here. The
+      // wizard's finale navigates into the editor itself, and a redirect would
+      // cut the build animation short. Normal launches start at '/' and fall
+      // through to null anyway.
       return null;
     },
     refreshListenable: _RiverpodRefresh(ref),
@@ -36,9 +42,9 @@ final appRouterProvider = Provider<GoRouter>((ref) {
       // route reverts that route to the platform default — useful for
       // debugging, but otherwise keep them consistent.
       GoRoute(
-        path: '/onboarding/unit',
+        path: '/onboarding',
         pageBuilder: (context, state) =>
-            liftPage(key: state.pageKey, child: const UnitPickScreen()),
+            liftPage(key: state.pageKey, child: const OnboardingScreen()),
       ),
       GoRoute(
         path: '/',

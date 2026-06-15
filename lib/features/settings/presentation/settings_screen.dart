@@ -4,12 +4,16 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../../core/config.dart';
+import '../../../core/db/maintenance.dart';
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/spec.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
+import '../../../main.dart' show databaseProvider;
+import '../../programs/application/programs_provider.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -133,6 +137,13 @@ class SettingsScreen extends ConsumerWidget {
                       .setLiveActivityEnabled(v),
                 ),
               ),
+            ),
+          ],
+          if (kDevToolsEnabled) ...[
+            const SizedBox(height: LsGap.loose),
+            _Section(
+              title: 'DEVELOPER',
+              child: _ResetDataRow(onReset: () => _resetAppData(context, ref)),
             ),
           ],
           const SizedBox(height: 40),
@@ -368,4 +379,94 @@ Future<int?> _pickRestSeconds(BuildContext context, int current) {
       );
     },
   );
+}
+
+/// Developer action: wipe every row of user data, then flip the onboarding
+/// flag so the router's refresh listener drops the user back into a fresh
+/// first-run wizard. Confirmed first — it's destructive and irreversible.
+Future<void> _resetAppData(BuildContext context, WidgetRef ref) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (ctx) {
+      final t = LsTheme.of(ctx);
+      return AlertDialog(
+        title: const Text('RESET APP DATA?'),
+        content: Text(
+          'Deletes all programs and history, then restarts onboarding. '
+          'This cannot be undone.',
+          style: LsType.bodyM.copyWith(color: t.surface.text2),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: Text(
+              'CANCEL',
+              style: LsType.button.copyWith(color: t.surface.text2),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: LsSignals.danger,
+              foregroundColor: Colors.white,
+              minimumSize: const Size(88, 44),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('RESET'),
+          ),
+        ],
+      );
+    },
+  );
+  if (confirmed != true) return;
+  await wipeAllData(ref.read(databaseProvider));
+  ref.invalidate(programsListProvider);
+  // Last — this triggers the redirect into onboarding (unmounting Settings).
+  await ref.read(settingsProvider.notifier).setOnboardingComplete(false);
+}
+
+class _ResetDataRow extends StatelessWidget {
+  const _ResetDataRow({required this.onReset});
+  final VoidCallback onReset;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(LsRadius.r3),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        onTap: onReset,
+        child: Container(
+          padding: LsPad.cardStd,
+          decoration: BoxDecoration(
+            color: t.surface.surface,
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: LsSignals.danger.withValues(alpha: 0.4)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Reset app data',
+                      style: LsType.displayM.copyWith(color: LsSignals.danger),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'DELETE EVERYTHING · REPLAY ONBOARDING',
+                      style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.delete_outline, color: LsSignals.danger, size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }

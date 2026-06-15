@@ -25,6 +25,7 @@ class AppSettings {
     required this.liveActivityEnabled,
     required this.themeMode,
     required this.accent,
+    required this.onboardingComplete,
   });
   final WeightUnit? unit; // null = not yet chosen
   final double weightStep;
@@ -33,6 +34,12 @@ class AppSettings {
   final ThemeMode themeMode;
   final LsAccent accent;
 
+  /// Whether the first-run onboarding wizard has been completed. Gates the
+  /// app's initial route (see `app_router.dart`). Set `true` at the moment the
+  /// chosen starting program is seeded — never before — so an interrupted
+  /// first run always re-enters the wizard with no half-built program.
+  final bool onboardingComplete;
+
   AppSettings copyWith({
     WeightUnit? unit,
     double? weightStep,
@@ -40,6 +47,7 @@ class AppSettings {
     bool? liveActivityEnabled,
     ThemeMode? themeMode,
     LsAccent? accent,
+    bool? onboardingComplete,
   }) =>
       AppSettings(
         unit: unit ?? this.unit,
@@ -48,6 +56,7 @@ class AppSettings {
         liveActivityEnabled: liveActivityEnabled ?? this.liveActivityEnabled,
         themeMode: themeMode ?? this.themeMode,
         accent: accent ?? this.accent,
+        onboardingComplete: onboardingComplete ?? this.onboardingComplete,
       );
 }
 
@@ -61,6 +70,7 @@ class SettingsRepository {
   static const _kLiveActivity = 'settings.live_activity';
   static const _kThemeMode = 'settings.theme_mode';
   static const _kAccent = 'settings.accent';
+  static const _kOnboardingComplete = 'settings.onboarding_complete';
   static const int defaultRestSeconds = 90;
 
   AppSettings read() {
@@ -84,6 +94,11 @@ class SettingsRepository {
       (a) => a.name == accentName,
       orElse: () => LsAccent.red,
     );
+    // Legacy fallback: builds that predate the onboarding flag already chose a
+    // unit, so treat "unit set" as "onboarding done" when the explicit flag is
+    // absent. New installs (no unit, no flag) correctly read as incomplete.
+    final onboardingComplete =
+        _prefs.getBool(_kOnboardingComplete) ?? (unit != null);
     return AppSettings(
       unit: unit,
       weightStep: step,
@@ -91,6 +106,7 @@ class SettingsRepository {
       liveActivityEnabled: liveActivity,
       themeMode: mode,
       accent: accent,
+      onboardingComplete: onboardingComplete,
     );
   }
 
@@ -121,6 +137,10 @@ class SettingsRepository {
 
   Future<void> writeAccent(LsAccent accent) async {
     await _prefs.setString(_kAccent, accent.name);
+  }
+
+  Future<void> writeOnboardingComplete(bool complete) async {
+    await _prefs.setBool(_kOnboardingComplete, complete);
   }
 }
 

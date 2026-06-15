@@ -40,6 +40,11 @@ class SettingsNotifier extends Notifier<AppSettings> {
     await ref.read(settingsRepositoryProvider).writeAccent(accent);
     state = state.copyWith(accent: accent);
   }
+
+  Future<void> setOnboardingComplete(bool complete) async {
+    await ref.read(settingsRepositoryProvider).writeOnboardingComplete(complete);
+    state = state.copyWith(onboardingComplete: complete);
+  }
 }
 
 final settingsProvider =

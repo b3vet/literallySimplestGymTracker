@@ -10,6 +10,20 @@ final programDaoProvider = Provider<ProgramDao>((ref) {
   return ProgramDao(ref.watch(databaseProvider));
 });
 
+/// Set to a program id by the onboarding finale immediately before it routes
+/// into the editor, so the editor can show a one-time "your program is ready"
+/// coaching caption on first arrival and then clear it. Transient (in-memory)
+/// by design — it only needs to survive the single navigation, not a relaunch.
+class JustOnboardedProgramId extends Notifier<String?> {
+  @override
+  String? build() => null;
+  void set(String? id) => state = id;
+}
+
+final justOnboardedProgramIdProvider =
+    NotifierProvider<JustOnboardedProgramId, String?>(
+        JustOnboardedProgramId.new);
+
 final programsListProvider = FutureProvider<List<Program>>((ref) {
   return ref.watch(programDaoProvider).listPrograms();
 });

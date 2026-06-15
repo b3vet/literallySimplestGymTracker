@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -21,6 +23,48 @@ class ProgramEditorScreen extends ConsumerStatefulWidget {
 
 class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
   bool _editing = false;
+
+  /// One-time "your program is ready" coaching strip, shown only when the
+  /// editor is reached straight out of the onboarding finale. Dismisses on the
+  /// first interaction (or after a few idle seconds) and never returns.
+  bool _showCoach = false;
+  Timer? _coachTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final justOnboarded = ref.read(justOnboardedProgramIdProvider);
+      if (justOnboarded == widget.programId) {
+        // Consume the flag so it only ever fires once.
+        ref.read(justOnboardedProgramIdProvider.notifier).set(null);
+        setState(() => _showCoach = true);
+        _coachTimer = Timer(
+          const Duration(seconds: 7),
+          () {
+            if (mounted) setState(() => _showCoach = false);
+          },
+        );
+      }
+    });
+  }
+
+  void _dismissCoach() {
+    _coachTimer?.cancel();
+    if (_showCoach) setState(() => _showCoach = false);
+  }
+
+  void _startWorkout() {
+    _dismissCoach();
+    context.push('/workout/start');
+  }
+
+  @override
+  void dispose() {
+    _coachTimer?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -59,8 +103,24 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
         },
         onRight: () => _addDay(context),
       ),
-      child: days.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _CoachCaption(
+            visible: _showCoach,
+            onStartWorkout: _startWorkout,
+          ),
+          Expanded(
+            child: Listener(
+              // Only the day list dismisses the coach on interaction — NOT the
+              // caption, or a pointer-down would tear down the START button
+              // before its onTap could fire.
+              onPointerDown: (_) {
+                if (_showCoach) _dismissCoach();
+              },
+              child: days.when(
+                loading: () =>
+                    const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (list) => list.isEmpty
             ? _EmptyDays(text2: t.surface.text2)
@@ -111,7 +171,11 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
                   ),
                 ],
               ),
-      ),
+              ),
+              ),
+            ),
+          ],
+        ),
     );
   }
 
@@ -221,6 +285,97 @@ class _EmptyDays extends StatelessWidget {
           textAlign: TextAlign.center,
           style: LsType.bodyM.copyWith(color: text2),
         ),
+      ),
+    );
+  }
+}
+
+/// First-arrival coach strip. Collapses (height + fade) to nothing once
+/// dismissed, so the editor returns to its normal layout with no leftover gap.
+class _CoachCaption extends StatelessWidget {
+  const _CoachCaption({required this.visible, required this.onStartWorkout});
+  final bool visible;
+  final VoidCallback onStartWorkout;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return AnimatedSize(
+      duration: LsMotion.base,
+      curve: Curves.easeOut,
+      alignment: Alignment.topCenter,
+      child: AnimatedOpacity(
+        duration: LsMotion.base,
+        opacity: visible ? 1 : 0,
+        child: visible
+            ? Padding(
+                padding: const EdgeInsets.only(bottom: LsGap.sub),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: t.accentDimBg,
+                    borderRadius: BorderRadius.circular(LsRadius.r3),
+                    border: Border.all(
+                      color: t.accent.accent.withValues(alpha: 0.4),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.check_circle_outline,
+                              color: t.accent.accent, size: 18),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'Your program is ready. Tap any day below to '
+                              'edit it.',
+                              style:
+                                  LsType.bodyS.copyWith(color: t.surface.text),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      // The explicit "way to start lifting" — straight to the
+                      // day picker, since you can't start a workout from here.
+                      Material(
+                        color: t.accent.accent,
+                        borderRadius: BorderRadius.circular(LsRadius.r2),
+                        child: InkWell(
+                          borderRadius: BorderRadius.circular(LsRadius.r2),
+                          onTap: onStartWorkout,
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 9),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.play_arrow,
+                                    size: 18, color: t.accent.accentInk),
+                                const SizedBox(width: 6),
+                                Text(
+                                  'START A WORKOUT',
+                                  style: LsType.button.copyWith(
+                                    color: t.accent.accentInk,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Icon(Icons.arrow_forward,
+                                    size: 16, color: t.accent.accentInk),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : const SizedBox(width: double.infinity),
       ),
     );
   }
