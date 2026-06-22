@@ -12,5 +12,9 @@ import UIKit
 
   func didInitializeImplicitFlutterEngine(_ engineBridge: FlutterImplicitEngineBridge) {
     GeneratedPluginRegistrant.register(with: engineBridge.pluginRegistry)
+    // PHASE 0 — wire the Pigeon watch bridge onto the engine's messenger.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "WatchBridge") {
+      WCSessionManager.shared.bootstrap(messenger: registrar.messenger())
+    }
   }
 }

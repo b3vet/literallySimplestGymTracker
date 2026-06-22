@@ -14,6 +14,7 @@ import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/active_workout_controller.dart';
 import '../application/rest_timer_controller.dart';
+import '../application/watch_sync_controller.dart';
 import '../domain/active_session.dart';
 import '../domain/workout_set.dart';
 import '../../history/application/history_provider.dart';
@@ -51,6 +52,22 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // A finish/discard initiated on the WATCH should navigate the phone the same
+    // way an on-phone end does: to the summary on finish, home on discard.
+    ref.listen<WatchEndEvent?>(watchEndEventProvider, (prev, ev) {
+      if (ev == null || _exiting) return;
+      _exiting = true;
+      ref.read(restTimerProvider.notifier).dismiss();
+      _invalidateHistoryProviders();
+      ref.read(watchEndEventProvider.notifier).clear();
+      if (!mounted) return;
+      if (ev.completed) {
+        context.go('/workout/summary/${ev.sessionId}');
+      } else {
+        context.go('/');
+      }
+    });
+
     final async = ref.watch(activeSessionProvider);
     return async.when(
       loading: () =>
@@ -528,9 +545,31 @@ class _HeaderRow extends StatelessWidget {
               ),
             ),
             const SizedBox(height: LsGap.tight),
-            Text(
-              'ELAPSED',
-              style: LsType.monoMeta.copyWith(color: t.surface.text2),
+            // "ELAPSED" with a small watch glyph that appears ONLY while the
+            // watch app is connected. Tucked inside the centered column so it
+            // never shifts the header's left/right balance.
+            Consumer(
+              builder: (context, ref, _) {
+                final watchConnected = ref.watch(watchConnectedProvider);
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'ELAPSED',
+                      style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                    ),
+                    if (watchConnected) ...[
+                      const SizedBox(width: 6),
+                      Icon(
+                        Icons.watch,
+                        size: 13,
+                        color: t.accent.accent,
+                        semanticLabel: 'Apple Watch connected',
+                      ),
+                    ],
+                  ],
+                );
+              },
             ),
           ],
         ),

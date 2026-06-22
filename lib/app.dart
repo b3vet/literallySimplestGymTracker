@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
 import 'core/settings/settings_provider.dart';
 import 'core/theme/app_theme.dart';
+import 'features/workout/application/watch_sync_controller.dart';
 
 class App extends ConsumerWidget {
   const App({super.key});
@@ -13,6 +14,12 @@ class App extends ConsumerWidget {
     final router = ref.watch(appRouterProvider);
     final settings = ref.watch(settingsProvider);
     final accent = lsAccentSpec(settings.accent);
+
+    // Bring the watch sync layer to life at startup (lazy singleton; activates
+    // WCSession, registers the native->Dart callbacks, and wires the
+    // snapshot-push listeners). Provider never notifies, so watching it never
+    // rebuilds App.
+    ref.watch(watchBridgeControllerProvider);
 
     final lightTheme = LsTheme.buildThemeData(
       s: lsLight,

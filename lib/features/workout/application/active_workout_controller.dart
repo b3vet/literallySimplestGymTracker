@@ -14,6 +14,7 @@ import '../domain/workout_set.dart';
 import 'live_activity_controller.dart';
 import 'pr_detector.dart';
 import 'rest_timer_controller.dart';
+import 'watch_bridge.g.dart';
 
 final workoutDaoProvider = Provider<WorkoutDao>((ref) {
   return WorkoutDao(ref.watch(databaseProvider));
@@ -206,6 +207,49 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     state = AsyncValue.data(updated);
     _pushLiveActivity(updated);
     return newSet;
+  }
+
+  /// Apply a set logged on the watch (SOW §6). The set log is append-only and
+  /// keyed by [WatchSet.id]: if a set with this id already exists in
+  /// [loggedSets] this is a no-op (idempotent — the watch may re-deliver or we
+  /// may have already echoed it back), otherwise it's persisted under the
+  /// watch-authored id and the cursor advances using the SAME rule as [logSet].
+  ///
+  /// Like [logSet], the set is attributed to the current exercise. Inbound
+  /// apply only — it must not re-push a mutation back to the watch.
+  Future<void> applyWatchLogSet(WatchSet set) async {
+    final current = state.value;
+    if (current == null || current.isFinished) return;
+    // Idempotency: dedupe by id, never double-add the same set.
+    if (current.loggedSets.any((s) => s.id == set.id)) return;
+    final pe = current.currentExercise!;
+    final newSet = await _workoutDao.insertSet(
+      id: set.id,
+      sessionId: current.sessionId,
+      exerciseId: pe.exerciseId,
+      setIndex: current.loggedSets.length,
+      reps: set.reps,
+      weightKg: set.weightKg,
+      rir: set.rir,
+    );
+
+    final newLoggedSets = [...current.loggedSets, newSet];
+
+    // Same auto-advance rule as logSet: advance only forward when the current
+    // exercise's target sets are complete.
+    final setsForCurrent =
+        newLoggedSets.where((s) => s.exerciseId == pe.exerciseId).length;
+    final shouldAdvance = setsForCurrent >= pe.targetSets;
+    final nextCursor = shouldAdvance
+        ? Cursor(exerciseIdx: current.cursor.exerciseIdx + 1, setIdx: 0)
+        : current.cursor;
+
+    final updated = current.copyWith(
+      loggedSets: newLoggedSets,
+      cursor: nextCursor,
+    );
+    state = AsyncValue.data(updated);
+    _pushLiveActivity(updated);
   }
 
   Future<void> editSet(WorkoutSet updated) async {

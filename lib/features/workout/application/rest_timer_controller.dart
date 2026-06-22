@@ -60,6 +60,26 @@ class RestTimerController extends Notifier<RestTimerState> {
     _pushToLiveActivity();
   }
 
+  /// Apply a rest end-time that arrived FROM the watch (SOW §6, last-writer-
+  /// wins). [endsAtMs] is an absolute epoch; 0 or any past value cancels rest.
+  ///
+  /// This is an inbound apply: it updates local state + the Live Activity, but
+  /// the watch-side echo is suppressed by the sync controller (which ignores
+  /// the listener tick this state change triggers) so we don't bounce the same
+  /// rest back to the watch.
+  void applyRemoteRest(int endsAtMs) {
+    final now = DateTime.now();
+    if (endsAtMs <= now.millisecondsSinceEpoch) {
+      dismiss();
+      return;
+    }
+    state = RestTimerState(
+      endsAt: DateTime.fromMillisecondsSinceEpoch(endsAtMs),
+    );
+    _rescheduleExpiry();
+    _pushToLiveActivity();
+  }
+
   /// Fire a one-shot timer at the rest-end so we can push an update to clear
   /// the Live Activity countdown the moment the rest naturally completes.
   /// Without this the lock-screen widget would freeze at "0:00" until the

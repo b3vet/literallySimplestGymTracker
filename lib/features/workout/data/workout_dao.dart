@@ -73,9 +73,13 @@ class WorkoutDao {
     required int reps,
     required double weightKg,
     required int rir,
+    // When non-null, use this id (e.g. a watch-authored set's idempotency key)
+    // instead of minting a fresh uuid. Lets the phone persist a set under the
+    // same id the watch already assigned so the append-only log dedupes by id.
+    String? id,
   }) async {
     final s = WorkoutSet(
-      id: _uuid.v4(),
+      id: id ?? _uuid.v4(),
       sessionId: sessionId,
       exerciseId: exerciseId,
       setIndex: setIndex,
