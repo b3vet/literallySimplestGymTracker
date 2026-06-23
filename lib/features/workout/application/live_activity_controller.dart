@@ -171,7 +171,7 @@ class LiveActivityController {
       'exerciseName': pe.exerciseName,
       'exerciseIndex': p.activeIndex + 1,
       'totalExercises': p.totalExercises,
-      'setIndex': sets.length + 1,
+      'setIndex': p.completedSets + 1,
       'targetSets': pe.targetSets,
       'targetRepsMin': pe.targetRepsMin,
       'targetRepsMax': pe.targetRepsMax,

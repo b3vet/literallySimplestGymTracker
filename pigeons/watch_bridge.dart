@@ -28,16 +28,30 @@ import 'package:pigeon/pigeon.dart';
 class WatchSet {
   WatchSet({
     required this.id,
+    required this.exerciseId,
     required this.reps,
     required this.weightKg,
     required this.rir,
     required this.loggedAtMs,
+    this.setGroup,
+    required this.groupSeq,
   });
   String id;
+
+  /// The set's own exercise — so an inbound watch set is attributed by identity,
+  /// not the (possibly-advanced) cursor. Critical for drop sets, whose drops
+  /// arrive after the top set may have already advanced the cursor.
+  String exerciseId;
   int reps;
   double weightKg;
   int rir;
   int loggedAtMs;
+
+  /// Set-group primitive (drop set now, superset later). NULL => singleton.
+  String? setGroup;
+
+  /// Order within the group: 0 = top, 1..N = drops.
+  int groupSeq;
 }
 
 /// One slot in the workout queue, flattened for the watch.
@@ -52,6 +66,8 @@ class WatchExercise {
     required this.defaultWeightKg,
     this.weightStepKg,
     required this.isOverridden,
+    required this.skipped,
+    required this.dropCount,
     required this.loggedSets,
   });
   String programExerciseId;
@@ -69,6 +85,15 @@ class WatchExercise {
   /// True when this slot was substituted on the phone (read-only "SUBSTITUTED"
   /// badge on the watch; swapping is phone-only).
   bool isOverridden;
+
+  /// True when this slot was skipped for the session on the phone (skip is
+  /// phone-only, like swapping). The watch renders it struck-through and walks
+  /// its cursor past it; the slot stays in the queue so indices line up.
+  bool skipped;
+
+  /// 0 = normal; N ≥ 1 = each working set is a drop set with N drops after the
+  /// top. The watch extends its logger with reps+weight page(s) per drop.
+  int dropCount;
 
   List<WatchSet> loggedSets;
 }

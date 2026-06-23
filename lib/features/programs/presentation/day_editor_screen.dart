@@ -157,6 +157,7 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
           targetRepsMax: result.repsMax,
           defaultWeightKg: result.weightKg,
           weightStepKg: result.weightStepKg,
+          dropCount: result.dropCount,
         );
     ref.invalidate(dayExercisesProvider(widget.dayId));
   }
@@ -175,6 +176,7 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       initialRepsMax: v.pe.targetRepsMax,
       initialWeightKg: v.pe.defaultWeightKg,
       initialWeightStepKg: v.pe.weightStepKg,
+      initialDropCount: v.pe.dropCount,
       canDelete: true,
     );
     if (result == null) return;
@@ -195,6 +197,7 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
               targetRepsMax: result.repsMax,
               defaultWeightKg: result.weightKg,
               weightStepKg: result.weightStepKg,
+              dropCount: result.dropCount,
             ),
           );
     }
@@ -259,6 +262,8 @@ class _ExerciseTile extends ConsumerWidget {
                     MetaPill(value: '${pe.targetSets}', text: 'SETS'),
                     MetaPill(value: repsValue, text: 'REPS'),
                     MetaPill(value: weightValue, text: unit.short),
+                    if (pe.dropCount > 0)
+                      MetaPill(value: '×${pe.dropCount}', text: 'DROP'),
                   ],
                 ),
               ],

@@ -13,6 +13,10 @@ class PlannedExercise {
     this.weightStepKg,
     this.isOverridden = false,
     this.previousExerciseId,
+    this.skipped = false,
+    this.position = 0,
+    this.isInserted = false,
+    this.dropCount = 0,
   });
   final String programExerciseId;
   final String exerciseId;
@@ -38,6 +42,27 @@ class PlannedExercise {
   /// false.
   final String? previousExerciseId;
 
+  /// True when this slot was skipped for the session (durable, persisted on the
+  /// override). The cursor walks past skipped slots; the program status sheet
+  /// renders them struck-through. Never set on the program-side template.
+  final bool skipped;
+
+  /// Queue order key. Template slots use their program `position` (0,1,2,…);
+  /// inserted slots use a fractional midpoint so they sit between neighbours.
+  /// The queue is kept sorted by this; cursor navigation uses list order.
+  final double position;
+
+  /// True when this slot was inserted into the session (not from the program
+  /// template). Drives the "revert to plan" gate and the resume merge.
+  final bool isInserted;
+
+  /// 0 = normal; N ≥ 1 = each working set is a drop set with N drops. Mirrors
+  /// the program/override `drop_count` so it survives swaps/edits/inserts.
+  final int dropCount;
+
+  /// Whether this slot is a drop-set exercise.
+  bool get isDropSet => dropCount > 0;
+
   factory PlannedExercise.fromView(ProgramExerciseView v) => PlannedExercise(
         programExerciseId: v.pe.id,
         exerciseId: v.pe.exerciseId,
@@ -47,6 +72,8 @@ class PlannedExercise {
         targetRepsMax: v.pe.targetRepsMax,
         defaultWeightKg: v.pe.defaultWeightKg,
         weightStepKg: v.pe.weightStepKg,
+        position: v.pe.position.toDouble(),
+        dropCount: v.pe.dropCount,
       );
 
   PlannedExercise copyWith({
@@ -60,6 +87,10 @@ class PlannedExercise {
     Object? weightStepKg = _unset,
     bool? isOverridden,
     Object? previousExerciseId = _unset,
+    bool? skipped,
+    double? position,
+    bool? isInserted,
+    int? dropCount,
   }) =>
       PlannedExercise(
         programExerciseId: programExerciseId,
@@ -76,6 +107,10 @@ class PlannedExercise {
         previousExerciseId: identical(previousExerciseId, _unset)
             ? this.previousExerciseId
             : previousExerciseId as String?,
+        skipped: skipped ?? this.skipped,
+        position: position ?? this.position,
+        isInserted: isInserted ?? this.isInserted,
+        dropCount: dropCount ?? this.dropCount,
       );
 }
 
@@ -115,6 +150,41 @@ class ActiveSession {
         cursor: cursor ?? this.cursor,
         loggedSets: loggedSets ?? this.loggedSets,
       );
+}
+
+/// Completed sets for an exercise = number of DISTINCT group keys among its
+/// logged rows. Identical to row-count for normal (singleton-group) sets; a
+/// drop set (top + drops sharing one group) counts as exactly one.
+int completedSetsFor(List<WorkoutSet> logged, String exerciseId) {
+  final keys = <String>{};
+  for (final s in logged) {
+    if (s.exerciseId == exerciseId) keys.add(s.groupKey);
+  }
+  return keys.length;
+}
+
+/// An exercise's logged rows split into back-to-back groups (drop sets), in log
+/// order; each group's rows sorted by `groupSeq`. A normal set is a group of
+/// one. Used for grouped display.
+List<List<WorkoutSet>> groupedSetsFor(
+    List<WorkoutSet> logged, String exerciseId) {
+  final order = <String>[];
+  final byKey = <String, List<WorkoutSet>>{};
+  for (final s in logged) {
+    if (s.exerciseId != exerciseId) continue;
+    final k = s.groupKey;
+    final list = byKey[k];
+    if (list == null) {
+      byKey[k] = [s];
+      order.add(k);
+    } else {
+      list.add(s);
+    }
+  }
+  return [
+    for (final k in order)
+      byKey[k]!..sort((a, b) => a.groupSeq.compareTo(b.groupSeq)),
+  ];
 }
 
 class Cursor {

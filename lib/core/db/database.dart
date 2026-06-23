@@ -5,7 +5,7 @@ import 'package:sqflite/sqflite.dart';
 import 'migrations.dart';
 
 const _dbFileName = 'simple_gym.db';
-const _dbVersion = 3;
+const _dbVersion = 6;
 
 Future<Database> openAppDatabase() async {
   final dir = await getApplicationDocumentsDirectory();
@@ -27,6 +27,15 @@ Future<Database> openAppDatabase() async {
       for (final stmt in schemaV3Up) {
         batch.execute(stmt);
       }
+      for (final stmt in schemaV4Up) {
+        batch.execute(stmt);
+      }
+      for (final stmt in schemaV5Up) {
+        batch.execute(stmt);
+      }
+      for (final stmt in schemaV6Up) {
+        batch.execute(stmt);
+      }
       await batch.commit(noResult: true);
     },
     onUpgrade: (db, oldVersion, newVersion) async {
@@ -38,6 +47,21 @@ Future<Database> openAppDatabase() async {
       }
       if (oldVersion < 3) {
         for (final stmt in schemaV3Up) {
+          batch.execute(stmt);
+        }
+      }
+      if (oldVersion < 4) {
+        for (final stmt in schemaV4Up) {
+          batch.execute(stmt);
+        }
+      }
+      if (oldVersion < 5) {
+        for (final stmt in schemaV5Up) {
+          batch.execute(stmt);
+        }
+      }
+      if (oldVersion < 6) {
+        for (final stmt in schemaV6Up) {
           batch.execute(stmt);
         }
       }

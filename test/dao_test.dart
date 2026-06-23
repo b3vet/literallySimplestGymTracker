@@ -9,7 +9,7 @@ Future<Database> _openInMemory() async {
   final factory = databaseFactoryFfi;
   final db = await factory.openDatabase(inMemoryDatabasePath,
       options: OpenDatabaseOptions(
-        version: 3,
+        version: 6,
         onConfigure: (db) async =>
             db.execute('PRAGMA foreign_keys = ON'),
         onCreate: (db, _) async {
@@ -21,6 +21,15 @@ Future<Database> _openInMemory() async {
             b.execute(stmt);
           }
           for (final stmt in schemaV3Up) {
+            b.execute(stmt);
+          }
+          for (final stmt in schemaV4Up) {
+            b.execute(stmt);
+          }
+          for (final stmt in schemaV5Up) {
+            b.execute(stmt);
+          }
+          for (final stmt in schemaV6Up) {
             b.execute(stmt);
           }
           await b.commit(noResult: true);
@@ -256,6 +265,219 @@ void main() {
     await db.delete('workout_sessions',
         where: 'id = ?', whereArgs: [session.id]);
     expect((await wdao.overridesForSession(session.id)).length, 0);
+
+    await db.close();
+  });
+
+  test('session exercise overrides: skipped flag persists and round-trips',
+      () async {
+    final db = await _openInMemory();
+    final pdao = ProgramDao(db);
+    final wdao = WorkoutDao(db);
+
+    final p = await pdao.createProgram('PPL');
+    final d = await pdao.createDay(p.id, 'Push A');
+    final pe = await pdao.addProgramExercise(
+      programDayId: d.id,
+      exerciseName: 'Lateral Raise',
+      targetSets: 3,
+      targetRepsMin: 12,
+      targetRepsMax: 15,
+      defaultWeightKg: 10,
+    );
+    final ex = await pdao.findOrCreateExercise('Lateral Raise');
+    final session = await wdao.startSession(d.id);
+
+    // Default is not-skipped.
+    await wdao.upsertOverride(
+      sessionId: session.id,
+      programExerciseId: pe.id,
+      exerciseId: ex.id,
+      targetSets: 3,
+      targetRepsMin: 12,
+      targetRepsMax: 15,
+      defaultWeightKg: 10,
+    );
+    expect((await wdao.overridesForSession(session.id)).first.skipped, false);
+
+    // Skipping updates the same row (UNIQUE per slot), preserves the exercise
+    // and targets, and reads back as skipped.
+    await wdao.upsertOverride(
+      sessionId: session.id,
+      programExerciseId: pe.id,
+      exerciseId: ex.id,
+      targetSets: 3,
+      targetRepsMin: 12,
+      targetRepsMax: 15,
+      defaultWeightKg: 10,
+      skipped: true,
+    );
+    final overrides = await wdao.overridesForSession(session.id);
+    expect(overrides.length, 1, reason: 'UNIQUE constraint should hold');
+    expect(overrides.first.skipped, true);
+    expect(overrides.first.exerciseId, ex.id);
+    expect(overrides.first.targetSets, 3);
+
+    await db.close();
+  });
+
+  test('insertSessionExercise persists an inserted override and round-trips',
+      () async {
+    final db = await _openInMemory();
+    final pdao = ProgramDao(db);
+    final wdao = WorkoutDao(db);
+
+    final p = await pdao.createProgram('PPL');
+    final d = await pdao.createDay(p.id, 'Pull A');
+    final ex = await pdao.findOrCreateExercise('Face Pull');
+    final session = await wdao.startSession(d.id);
+
+    final peId = await wdao.insertSessionExercise(
+      sessionId: session.id,
+      exerciseId: ex.id,
+      targetSets: 4,
+      targetRepsMin: 12,
+      targetRepsMax: 20,
+      defaultWeightKg: 15,
+      orderPos: 1.5,
+    );
+    expect(peId, isNotEmpty);
+
+    final overrides = await wdao.overridesForSession(session.id);
+    expect(overrides.length, 1);
+    final o = overrides.first;
+    expect(o.inserted, true);
+    expect(o.orderPos, 1.5);
+    expect(o.programExerciseId, peId);
+    expect(o.exerciseId, ex.id);
+    expect(o.exerciseName, 'Face Pull');
+    expect(o.targetSets, 4);
+    expect(o.skipped, false);
+
+    // Mutating the inserted slot (e.g. add a set) via the same upsert path must
+    // preserve its inserted flag + order position.
+    await wdao.upsertOverride(
+      sessionId: session.id,
+      programExerciseId: peId,
+      exerciseId: ex.id,
+      targetSets: 5,
+      targetRepsMin: 12,
+      targetRepsMax: 20,
+      defaultWeightKg: 15,
+      inserted: true,
+      orderPos: 1.5,
+    );
+    final after = await wdao.overridesForSession(session.id);
+    expect(after.length, 1, reason: 'still one row (UNIQUE per slot)');
+    expect(after.first.targetSets, 5);
+    expect(after.first.inserted, true);
+    expect(after.first.orderPos, 1.5);
+
+    await db.close();
+  });
+
+  test('summary program-sync: raise target weight + add new exercise at end',
+      () async {
+    final db = await _openInMemory();
+    final dao = ProgramDao(db);
+    final p = await dao.createProgram('PPL');
+    final d = await dao.createDay(p.id, 'Push A');
+    final bench = await dao.addProgramExercise(
+      programDayId: d.id,
+      exerciseName: 'Bench Press',
+      targetSets: 3,
+      targetRepsMin: 5,
+      targetRepsMax: 8,
+      defaultWeightKg: 80,
+    );
+
+    // "Raise target": update the plan slot's default weight to a session PR.
+    await dao.updateProgramExercise(bench.copyWith(defaultWeightKg: 92.5));
+    var list = await dao.listProgramExercises(d.id);
+    expect(list.single.pe.defaultWeightKg, 92.5);
+    expect(list.single.pe.targetRepsMin, 5, reason: 'reps untouched');
+
+    // "Add to this day": an off-plan exercise becomes a new slot at the end.
+    final added = await dao.addProgramExercise(
+      programDayId: d.id,
+      exerciseName: 'Cable Fly',
+      targetSets: 4,
+      targetRepsMin: 12,
+      targetRepsMax: 15,
+      defaultWeightKg: 20,
+    );
+    list = await dao.listProgramExercises(d.id);
+    expect(list.length, 2);
+    expect(list.last.exerciseName, 'Cable Fly');
+    expect(list.last.pe.position, 1, reason: 'appended after Bench');
+
+    // UNDO of add removes exactly that slot.
+    await dao.deleteProgramExercise(added.id);
+    list = await dao.listProgramExercises(d.id);
+    expect(list.length, 1);
+    expect(list.single.exerciseName, 'Bench Press');
+
+    await db.close();
+  });
+
+  test('drop sets: program drop_count + grouped workout_sets round-trip',
+      () async {
+    final db = await _openInMemory();
+    final pdao = ProgramDao(db);
+    final wdao = WorkoutDao(db);
+
+    final p = await pdao.createProgram('PPL');
+    final d = await pdao.createDay(p.id, 'Pull A');
+    final pe = await pdao.addProgramExercise(
+      programDayId: d.id,
+      exerciseName: 'Lateral Raise',
+      targetSets: 3,
+      targetRepsMin: 12,
+      targetRepsMax: 15,
+      defaultWeightKg: 12,
+      dropCount: 2,
+    );
+    expect(pe.dropCount, 2);
+    final reloaded = await pdao.listProgramExercises(d.id);
+    expect(reloaded.single.pe.dropCount, 2);
+
+    final ex = await pdao.findOrCreateExercise('Lateral Raise');
+    final session = await wdao.startSession(d.id);
+
+    // Log one drop set as a group of 3 rows sharing a set_group.
+    const groupId = 'grp-1';
+    for (var i = 0; i < 3; i++) {
+      await wdao.insertSet(
+        sessionId: session.id,
+        exerciseId: ex.id,
+        setIndex: i,
+        reps: 12 - i,
+        weightKg: 12 - i * 2,
+        rir: i == 0 ? 1 : 0,
+        setGroup: groupId,
+        groupSeq: i,
+      );
+    }
+    // Plus a plain set (singleton group).
+    await wdao.insertSet(
+      sessionId: session.id,
+      exerciseId: ex.id,
+      setIndex: 3,
+      reps: 10,
+      weightKg: 12,
+      rir: 0,
+    );
+
+    final sets = await wdao.setsForSession(session.id);
+    expect(sets.length, 4);
+    final grouped = sets.where((s) => s.setGroup == groupId).toList();
+    expect(grouped.length, 3);
+    expect(grouped.map((s) => s.groupSeq).toList(), [0, 1, 2]);
+    // Distinct group keys = 2 (one drop set + one plain set).
+    expect(sets.map((s) => s.groupKey).toSet().length, 2);
+    // The plain set's group key is its own id.
+    final plain = sets.firstWhere((s) => s.setGroup == null);
+    expect(plain.groupKey, plain.id);
 
     await db.close();
   });

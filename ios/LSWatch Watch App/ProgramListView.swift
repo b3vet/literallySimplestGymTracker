@@ -25,13 +25,17 @@ struct ProgramListView: View {
                         .frame(height: 1)
 
                     ForEach(Array(session.queue.enumerated()), id: \.element.id) { idx, ex in
+                        let rowState = state(session, idx: idx)
                         ProgramRow(
                             index: idx,
                             exercise: ex,
-                            state: state(session, idx: idx),
+                            state: rowState,
                             unit: model.unit,
                             onTap: { model.goToExercise(idx: idx) }
                         )
+                        // Skipped exercises are out of the session for good —
+                        // their row is non-tappable so the cursor can't jump back.
+                        .disabled(rowState == .skipped)
                         if idx < session.queue.count - 1 {
                             Rectangle()
                                 .fill(LSColor.border)
@@ -65,7 +69,9 @@ struct ProgramListView: View {
 
     private func state(_ session: WatchSession, idx: Int) -> ProgramRowState {
         let ex = session.queue[idx]
-        let logged = ex.loggedSets.count
+        // A durably-skipped slot always reads as skipped, regardless of cursor.
+        if ex.isSkipped { return .skipped }
+        let logged = ex.completedGroups
         if logged >= ex.targetSets { return .done }
         if idx == session.cursorExerciseIdx { return .current }
         if idx < session.cursorExerciseIdx { return .skipped }
@@ -74,7 +80,7 @@ struct ProgramListView: View {
 
     private func completedCount(_ session: WatchSession) -> Int {
         session.queue.reduce(0) { acc, ex in
-            acc + (ex.loggedSets.count >= ex.targetSets ? 1 : 0)
+            acc + (ex.completedGroups >= ex.targetSets ? 1 : 0)
         }
     }
 }
@@ -177,7 +183,7 @@ struct ProgramRow: View {
     }
 
     private var metaLine: String {
-        let logged = exercise.loggedSets.count
+        let logged = exercise.completedGroups
         let reps = exercise.targetRepsMin == exercise.targetRepsMax
             ? "\(exercise.targetRepsMin)"
             : "\(exercise.targetRepsMin)–\(exercise.targetRepsMax)"

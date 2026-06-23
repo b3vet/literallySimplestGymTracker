@@ -31,6 +31,9 @@ Future<SetLogResult?> showSetLogSheet(
   required double? initialWeightKg,
   int initialRir = 0,
   String titleOverride = '',
+  // Drop-set drops capture reps + weight only — hide the RIR wheel.
+  bool showRir = true,
+  String saveLabel = 'SAVE SET',
 }) {
   return showModalBottomSheet<SetLogResult>(
     context: context,
@@ -44,6 +47,8 @@ Future<SetLogResult?> showSetLogSheet(
         initialWeightKg: initialWeightKg,
         initialRir: initialRir,
         titleOverride: titleOverride,
+        showRir: showRir,
+        saveLabel: saveLabel,
       ),
     ),
   );
@@ -57,6 +62,8 @@ class _SetLogSheet extends ConsumerStatefulWidget {
     required this.initialWeightKg,
     required this.initialRir,
     required this.titleOverride,
+    required this.showRir,
+    required this.saveLabel,
   });
   final PlannedExercise exercise;
   final int setNumber;
@@ -64,6 +71,8 @@ class _SetLogSheet extends ConsumerStatefulWidget {
   final double? initialWeightKg;
   final int initialRir;
   final String titleOverride;
+  final bool showRir;
+  final String saveLabel;
 
   @override
   ConsumerState<_SetLogSheet> createState() => _SetLogSheetState();
@@ -223,7 +232,7 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
           child: Row(
             children: [
               Expanded(
-                flex: 25,
+                flex: widget.showRir ? 25 : 35,
                 child: PickerColumn(
                   label: 'REPS',
                   controller: _repsCtrl,
@@ -236,7 +245,7 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
                 ),
               ),
               Expanded(
-                flex: 45,
+                flex: widget.showRir ? 45 : 65,
                 child: PickerColumn(
                   label: 'WEIGHT',
                   unitSuffix: unit.short,
@@ -251,24 +260,25 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
                   },
                 ),
               ),
-              Expanded(
-                flex: 25,
-                child: PickerColumn(
-                  label: 'RIR',
-                  controller: _rirCtrl,
-                  itemCount: _rirMax + 1,
-                  builder: (i, sel) => PickerText('$i', selected: sel),
-                  onChanged: (i) {
-                    setState(() => _rir = i);
-                  },
+              if (widget.showRir)
+                Expanded(
+                  flex: 25,
+                  child: PickerColumn(
+                    label: 'RIR',
+                    controller: _rirCtrl,
+                    itemCount: _rirMax + 1,
+                    builder: (i, sel) => PickerText('$i', selected: sel),
+                    onChanged: (i) {
+                      setState(() => _rir = i);
+                    },
+                  ),
                 ),
-              ),
             ],
           ),
         ),
         const SizedBox(height: LsGap.loose),
         LsButton(
-          label: 'SAVE SET',
+          label: widget.saveLabel,
           onPressed: _save,
           expand: true,
           minHeight: LsBox.cta,

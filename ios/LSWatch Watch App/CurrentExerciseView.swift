@@ -122,14 +122,18 @@ struct CurrentExerciseView: View {
     /// rest pending. Mirrors `_SetChipsRow`.
     @ViewBuilder
     private func setChips(_ ex: WatchExerciseVM) -> some View {
-        let total = max(ex.targetSets, ex.loggedSets.count)
-        let done = ex.loggedSets.count
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                ForEach(0..<total, id: \.self) { i in
-                    SetChip(index: i, state: chipState(i, done: done))
-                }
+        // Logical sets = distinct groups (a drop set's top+drops count once).
+        let total = max(ex.targetSets, ex.completedGroups)
+        let done = ex.completedGroups
+        // A plain HStack — NOT a horizontal ScrollView. A nested scroll view
+        // here captured the Digital Crown (and read its contentOffset binding),
+        // jamming the page's vertical scroll. Chips clip if they overrun; the
+        // set rows below carry the detail.
+        HStack(spacing: 6) {
+            ForEach(0..<total, id: \.self) { i in
+                SetChip(index: i, state: chipState(i, done: done))
             }
+            Spacer(minLength: 0)
         }
     }
 
@@ -143,30 +147,57 @@ struct CurrentExerciseView: View {
 
     @ViewBuilder
     private func setRows(_ ex: WatchExerciseVM) -> some View {
-        let logged = ex.loggedSets
-        let total = max(ex.targetSets, logged.count)
-        VStack(spacing: 6) {
-            ForEach(0..<total, id: \.self) { i in
-                if i < logged.count {
-                    LoggedSetRow(
-                        index: i,
-                        set: logged[i],
-                        unit: model.unit,
-                        onTap: { loggerTarget = .edit(logged[i], setNumber: i + 1) },
-                        onDelete: { model.deleteSet(setId: logged[i].id) }
-                    )
-                } else {
-                    PendingSetRow(index: i, isNext: i == logged.count)
+        if ex.isDropSet {
+            let groups = groupedSets(ex.loggedSets)
+            let total = max(ex.targetSets, groups.count)
+            VStack(spacing: 6) {
+                ForEach(0..<total, id: \.self) { i in
+                    if i < groups.count {
+                        DropSetRow(index: i, group: groups[i], unit: model.unit)
+                    } else {
+                        PendingSetRow(index: i, isNext: i == groups.count)
+                    }
+                }
+            }
+        } else {
+            let logged = ex.loggedSets
+            let total = max(ex.targetSets, logged.count)
+            VStack(spacing: 6) {
+                ForEach(0..<total, id: \.self) { i in
+                    if i < logged.count {
+                        LoggedSetRow(
+                            index: i,
+                            set: logged[i],
+                            unit: model.unit,
+                            onTap: { loggerTarget = .edit(logged[i], setNumber: i + 1) },
+                            onDelete: { model.deleteSet(setId: logged[i].id) }
+                        )
+                    } else {
+                        PendingSetRow(index: i, isNext: i == logged.count)
+                    }
                 }
             }
         }
+    }
+
+    /// Group an exercise's logged rows into back-to-back units (drop sets), in
+    /// log order; each group's rows sorted by groupSeq. A normal set is a group
+    /// of one.
+    private func groupedSets(_ logged: [WatchSetVM]) -> [[WatchSetVM]] {
+        var order: [String] = []
+        var byKey: [String: [WatchSetVM]] = [:]
+        for s in logged {
+            if byKey[s.groupKey] == nil { order.append(s.groupKey) }
+            byKey[s.groupKey, default: []].append(s)
+        }
+        return order.map { byKey[$0]!.sorted { ($0.groupSeq ?? 0) < ($1.groupSeq ?? 0) } }
     }
 
     // MARK: Primary CTA
 
     @ViewBuilder
     private func primaryButton(_ ex: WatchExerciseVM) -> some View {
-        let targetMet = ex.loggedSets.count >= ex.targetSets
+        let targetMet = ex.completedGroups >= ex.targetSets
         let hasNext = model.exerciseIndex < model.totalExercises
 
         if targetMet && hasNext {
@@ -178,8 +209,8 @@ struct CurrentExerciseView: View {
             // Last exercise complete — offer to finish.
             LSPrimaryButton(label: "Finish →") { showFinishDialog = true }
         } else {
-            LSPrimaryButton(label: "Log Set") {
-                loggerTarget = .new(setNumber: ex.loggedSets.count + 1)
+            LSPrimaryButton(label: ex.isDropSet ? "Log Drop Set" : "Log Set") {
+                loggerTarget = .new(setNumber: ex.completedGroups + 1)
             }
         }
     }
@@ -314,6 +345,69 @@ struct PendingSetRow: View {
         .background(
             RoundedRectangle(cornerRadius: LSRadius.r3, style: .continuous)
                 .stroke(isNext ? accent.accent : LSColor.border, lineWidth: 1)
+        )
+    }
+}
+
+// MARK: - DropSetRow
+
+/// A logged drop set: the top set, then each drop beneath it. Display-only on
+/// the watch (editing a drop set is phone-only in v1).
+struct DropSetRow: View {
+    let index: Int
+
+    /// The group's rows sorted by groupSeq: [top, drop1, …].
+    let group: [WatchSetVM]
+    let unit: String
+
+    @Environment(\.lsAccent) private var accent
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text("SET \(String(format: "%02d", index + 1))")
+                    .font(LSType.monoMeta)
+                    .tracking(0.8)
+                    .foregroundStyle(LSColor.text2)
+                Text("DROP")
+                    .font(LSType.monoMeta)
+                    .foregroundStyle(accent.accent)
+                Spacer(minLength: 0)
+            }
+            ForEach(Array(group.enumerated()), id: \.element.id) { i, s in
+                HStack(spacing: 4) {
+                    if i > 0 {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(LSColor.text3)
+                    }
+                    (
+                        Text(WeightConv.label(s.weightKg, unit: unit))
+                            .font(LSType.monoData)
+                            .foregroundStyle(i == 0 ? accent.accent : LSColor.text)
+                        + Text("  ×  ")
+                            .font(LSType.monoMeta)
+                            .foregroundStyle(LSColor.text2)
+                        + Text("\(s.reps)")
+                            .font(LSType.monoData)
+                            .foregroundStyle(LSColor.text)
+                    )
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                    Spacer(minLength: 0)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: LSRadius.r3, style: .continuous)
+                .fill(LSColor.surface)
+                .overlay(
+                    RoundedRectangle(cornerRadius: LSRadius.r3, style: .continuous)
+                        .stroke(accent.accent.opacity(0.5), lineWidth: 1)
+                )
         )
     }
 }

@@ -24,6 +24,10 @@ class SessionExerciseOverride {
     required this.targetRepsMax,
     required this.defaultWeightKg,
     this.weightStepKg,
+    this.skipped = false,
+    this.inserted = false,
+    this.orderPos,
+    this.dropCount = 0,
   });
 
   final String id;
@@ -41,4 +45,24 @@ class SessionExerciseOverride {
   final int targetRepsMax;
   final double defaultWeightKg;
   final double? weightStepKg;
+
+  /// True when the lifter skipped this exercise for this session. Durable so it
+  /// survives resume/watch-resync: the cursor walks past skipped slots and the
+  /// program status sheet renders them struck-through. Permanent in v1 — there
+  /// is no un-skip affordance. Logged sets (if any) are retained as history.
+  final bool skipped;
+
+  /// True when this row is a session-only INSERTED exercise rather than an
+  /// override of a template slot. Inserted rows have a synthetic
+  /// [programExerciseId] that matches no template exercise.
+  final bool inserted;
+
+  /// Queue order key for an inserted exercise (a midpoint between the integer
+  /// `position`s of neighbouring template slots). Null for template overrides,
+  /// which inherit their slot's template position.
+  final double? orderPos;
+
+  /// Drop-set config carried on the override so a mid-session swap/edit/insert
+  /// keeps it. 0 = normal; N ≥ 1 = drops after the top.
+  final int dropCount;
 }

@@ -11,9 +11,11 @@ import '../../../core/util/weight.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../../programs/application/programs_provider.dart';
+import '../../programs/domain/program_exercise.dart';
 import '../application/active_workout_controller.dart';
 import '../application/pr_detector.dart';
 import '../data/workout_dao.dart';
+import '../domain/active_session.dart';
 import '../domain/workout_session.dart';
 import '../domain/workout_set.dart';
 
@@ -34,12 +36,19 @@ final _sessionSummaryProvider =
 
   String? dayName;
   String? programName;
+  // Current program targets for this day, keyed by exerciseId, so each summary
+  // card knows whether the exercise is in the plan and its current target
+  // weight (drives "raise target" vs "add to day").
+  final planByExercise = <String, ProgramExercise>{};
   if (session.programDayId != null) {
     final d = await programDao.findDay(session.programDayId!);
     dayName = d?.name;
     if (d != null) {
       final p = await programDao.findProgram(d.programId);
       programName = p?.name;
+    }
+    for (final v in await programDao.listProgramExercises(session.programDayId!)) {
+      planByExercise[v.pe.exerciseId] = v.pe;
     }
   }
 
@@ -65,6 +74,7 @@ final _sessionSummaryProvider =
     prevByExercise: prevByExercise,
     dayName: dayName,
     programName: programName,
+    planByExercise: planByExercise,
   );
 });
 
@@ -82,6 +92,7 @@ class _SummaryData {
     required this.prevByExercise,
     required this.dayName,
     required this.programName,
+    required this.planByExercise,
   });
   final WorkoutSession session;
   final List<WorkoutSet> sets;
@@ -89,6 +100,10 @@ class _SummaryData {
   final Map<String, List<WorkoutSet>>? prevByExercise;
   final String? dayName;
   final String? programName;
+
+  /// Current program targets for this session's day, keyed by exerciseId.
+  /// Absent key => the exercise isn't in the day's plan (substituted/inserted).
+  final Map<String, ProgramExercise> planByExercise;
 }
 
 class SummaryScreen extends ConsumerWidget {
@@ -190,11 +205,15 @@ class SummaryScreen extends ConsumerWidget {
                   padding: const EdgeInsets.only(bottom: LsGap.sub),
                   child: _ExerciseCard(
                     name: d.exerciseNames[entry.key] ?? 'Exercise',
+                    exerciseId: entry.key,
                     sets: entry.value,
                     prevSets: d.prevByExercise?[entry.key],
                     isFirstSession: d.prevByExercise == null,
                     unit: unit,
                     pr: prs.value?[entry.key],
+                    planPe: d.planByExercise[entry.key],
+                    programDayId: d.session.programDayId,
+                    dayName: d.dayName,
                   ),
                 ),
             ],
@@ -357,22 +376,35 @@ class _TrendCard extends StatelessWidget {
 class _ExerciseCard extends StatelessWidget {
   const _ExerciseCard({
     required this.name,
+    required this.exerciseId,
     required this.sets,
     required this.prevSets,
     required this.isFirstSession,
     required this.unit,
     this.pr,
+    this.planPe,
+    this.programDayId,
+    this.dayName,
   });
   final String name;
+  final String exerciseId;
   final List<WorkoutSet> sets;
   final List<WorkoutSet>? prevSets;
   final bool isFirstSession;
   final WeightUnit unit;
   final ExercisePR? pr;
 
+  /// The program template row for this exercise in the session's day, or null
+  /// when it isn't in the plan (substituted/inserted).
+  final ProgramExercise? planPe;
+  final String? programDayId;
+  final String? dayName;
+
   @override
   Widget build(BuildContext context) {
     final t = LsTheme.of(context);
+    // Logical sets: a drop set's top+drops render as one grouped block.
+    final setGroups = groupedSetsFor(sets, exerciseId);
     final topWeight =
         sets.fold<double>(0, (m, s) => s.weightKg > m ? s.weightKg : m);
     final topRepsAtTop = sets
@@ -441,7 +473,7 @@ class _ExerciseCard extends StatelessWidget {
             children: [
               Expanded(
                 child: Text(
-                  '${sets.length} SETS · TOP '
+                  '${setGroups.length} SETS · TOP '
                   '${WeightConv.format(topWeight, unit).toUpperCase()} × $topRepsAtTop',
                   style: LsType.monoMeta.copyWith(color: t.surface.text2),
                 ),
@@ -453,30 +485,228 @@ class _ExerciseCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          for (var i = 0; i < sets.length; i++)
+          for (var g = 0; g < setGroups.length; g++)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 5),
               child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   SizedBox(
                     width: 64,
                     child: Text(
-                      'SET ${i + 1}',
+                      'SET ${g + 1}',
                       style: LsType.monoMeta.copyWith(color: t.surface.text2),
                     ),
                   ),
                   Expanded(
-                    child: Text(
-                      '${WeightConv.format(sets[i].weightKg, unit).toUpperCase()}  ×  '
-                      '${sets[i].reps}  ·  RIR ${sets[i].rir}',
-                      style: LsType.monoData
-                          .copyWith(color: t.surface.text, fontSize: 18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        for (var i = 0; i < setGroups[g].length; i++)
+                          Padding(
+                            padding: EdgeInsets.only(top: i == 0 ? 0 : 2),
+                            child: Text(
+                              '${i > 0 ? '↓ ' : ''}'
+                              '${WeightConv.format(setGroups[g][i].weightKg, unit).toUpperCase()}  ×  '
+                              '${setGroups[g][i].reps}'
+                              '${i == 0 && setGroups[g][i].rir > 0 ? '  ·  RIR ${setGroups[g][i].rir}' : ''}',
+                              style: LsType.monoData.copyWith(
+                                color: i == 0
+                                    ? t.surface.text
+                                    : t.surface.text2,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
               ),
             ),
+          _ProgramTargetButton(
+            programDayId: programDayId,
+            dayName: dayName,
+            exerciseName: name,
+            planPe: planPe,
+            topWeightKg: topWeight,
+            sets: sets,
+            unit: unit,
+            isWeightPr: pr != null && pr!.isPr && pr!.kind == PrKind.weight,
+          ),
         ],
+      ),
+    );
+  }
+}
+
+/// Per-exercise action on the summary that syncs the program template to what
+/// the lifter actually did this session — so progression doesn't mean editing
+/// the program by hand. Context-aware:
+///   • in the plan AND today's top weight beats the current target → "RAISE
+///     TARGET" (updates `default_weight` for that day's slot).
+///   • not in the plan (substituted / inserted) → "ADD TO {DAY}" (creates a
+///     new program exercise from this session's sets/reps/weight).
+///   • otherwise → nothing.
+/// Applies on one tap with a snackbar + UNDO; never asks first.
+class _ProgramTargetButton extends ConsumerStatefulWidget {
+  const _ProgramTargetButton({
+    required this.programDayId,
+    required this.dayName,
+    required this.exerciseName,
+    required this.planPe,
+    required this.topWeightKg,
+    required this.sets,
+    required this.unit,
+    required this.isWeightPr,
+  });
+
+  final String? programDayId;
+  final String? dayName;
+  final String exerciseName;
+  final ProgramExercise? planPe;
+  final double topWeightKg;
+  final List<WorkoutSet> sets;
+  final WeightUnit unit;
+
+  /// True when this session set a WEIGHT PR for the exercise — surface the
+  /// "set target" button even if today's top weight doesn't exceed the current
+  /// (possibly aspirational) program target.
+  final bool isWeightPr;
+
+  @override
+  ConsumerState<_ProgramTargetButton> createState() =>
+      _ProgramTargetButtonState();
+}
+
+class _ProgramTargetButtonState extends ConsumerState<_ProgramTargetButton> {
+  bool _applied = false;
+
+  bool get _isAdd => widget.planPe == null;
+  bool get _canRaise =>
+      widget.planPe != null &&
+      widget.topWeightKg > widget.planPe!.defaultWeightKg + 1e-6;
+
+  /// Offer the in-plan "set target" button when today's top beats the target OR
+  /// it's a weight PR (which the lifter expects to be able to lock in even if
+  /// their planned target sits above it).
+  bool get _showInPlan => !_isAdd && (_canRaise || widget.isWeightPr);
+
+  @override
+  Widget build(BuildContext context) {
+    if (widget.programDayId == null) return const SizedBox.shrink();
+    if (!_isAdd && !_showInPlan) return const SizedBox.shrink();
+
+    final t = LsTheme.of(context);
+    final accent = t.accent.accent;
+    final fg = _applied ? t.surface.text3 : accent;
+    final icon = _applied
+        ? Icons.check
+        : (_isAdd
+            ? Icons.add
+            : (_canRaise ? Icons.arrow_upward : Icons.star));
+    final weightLabel =
+        WeightConv.format(widget.topWeightKg, widget.unit).toUpperCase();
+    final label = _applied
+        ? (_isAdd ? 'ADDED' : 'TARGET SET')
+        : (_isAdd
+            ? 'ADD TO ${(widget.dayName ?? 'DAY').toUpperCase()}'
+            : (_canRaise
+                ? 'RAISE TARGET → $weightLabel'
+                : 'SET TARGET → $weightLabel'));
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 14),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(LsRadius.r2),
+          onTap: _applied ? null : _apply,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(LsRadius.r2),
+              border: Border.all(
+                color: _applied ? t.surface.border : accent,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 16, color: fg),
+                const SizedBox(width: 8),
+                Text(label, style: LsType.monoMeta.copyWith(color: fg)),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _apply() async {
+    final dao = ref.read(programDaoProvider);
+    if (_isAdd) {
+      var repsMin = widget.sets.first.reps;
+      var repsMax = widget.sets.first.reps;
+      for (final s in widget.sets) {
+        if (s.reps < repsMin) repsMin = s.reps;
+        if (s.reps > repsMax) repsMax = s.reps;
+      }
+      final created = await dao.addProgramExercise(
+        programDayId: widget.programDayId!,
+        exerciseName: widget.exerciseName,
+        targetSets: widget.sets.length,
+        targetRepsMin: repsMin,
+        targetRepsMax: repsMax,
+        defaultWeightKg: widget.topWeightKg,
+      );
+      if (!mounted) return;
+      _refreshDay();
+      setState(() => _applied = true);
+      _showUndo(
+        'Added ${widget.exerciseName.toUpperCase()} to '
+        '${(widget.dayName ?? 'day').toUpperCase()}',
+        () => dao.deleteProgramExercise(created.id),
+      );
+    } else {
+      final old = widget.planPe!;
+      await dao.updateProgramExercise(
+        old.copyWith(defaultWeightKg: widget.topWeightKg),
+      );
+      if (!mounted) return;
+      _refreshDay();
+      setState(() => _applied = true);
+      _showUndo(
+        '${widget.exerciseName.toUpperCase()} target → '
+        '${WeightConv.format(widget.topWeightKg, widget.unit).toUpperCase()}',
+        () => dao.updateProgramExercise(old),
+      );
+    }
+  }
+
+  /// Drop the cached day-exercise list so the program editor reflects the
+  /// add/raise without an app restart.
+  void _refreshDay() {
+    final dayId = widget.programDayId;
+    if (dayId != null) ref.invalidate(dayExercisesProvider(dayId));
+  }
+
+  void _showUndo(String message, Future<void> Function() undo) {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.clearSnackBars();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 5),
+        action: SnackBarAction(
+          label: 'UNDO',
+          onPressed: () async {
+            await undo();
+            _refreshDay();
+            if (mounted) setState(() => _applied = false);
+          },
+        ),
       ),
     );
   }

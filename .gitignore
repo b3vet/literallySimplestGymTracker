@@ -50,3 +50,8 @@ app.*.map.json
 /android/app/*.keystore
 
 devAssets
+
+researchEnv
+
+# Local research workspace (source notes / scratch — not part of the app or release)
+/research/

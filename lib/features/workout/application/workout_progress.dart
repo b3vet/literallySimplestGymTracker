@@ -12,12 +12,16 @@ import '../domain/workout_set.dart';
 ///   2. Otherwise, pick the FIRST exercise with zero logged sets — that's
 ///      the next thing to start.
 ///   3. If neither exists, every exercise is complete → `allDone`.
+///
+/// Skipped exercises are excluded from this search entirely — they're out of
+/// the session, so the Live Activity / progress view never rests on one.
 class WorkoutProgress {
   WorkoutProgress._({
     required this.totalExercises,
     required this.activeIndex,
     required this.exercise,
     required this.setsForActive,
+    required this.completedSets,
   });
 
   final int totalExercises;
@@ -25,22 +29,31 @@ class WorkoutProgress {
   final PlannedExercise? exercise;
   final List<WorkoutSet> setsForActive;
 
+  /// Distinct completed groups (= logical sets done) for the active exercise —
+  /// a drop set's top+drops count as one. Use this for "set N of M", not
+  /// `setsForActive.length` (which is raw rows).
+  final int completedSets;
+
   bool get allDone => exercise == null;
 
   factory WorkoutProgress.from(ActiveSession s) {
     int? lastPartial;
     int? firstZero;
     final perExerciseSets = <int, List<WorkoutSet>>{};
+    final perExerciseGroups = <int, int>{};
 
     for (var i = 0; i < s.queue.length; i++) {
       final pe = s.queue[i];
+      if (pe.skipped) continue; // skipped slots are out of the session
       final sets = s.loggedSets
           .where((x) => x.exerciseId == pe.exerciseId)
           .toList(growable: false);
       perExerciseSets[i] = sets;
-      if (sets.isEmpty) {
+      final groups = completedSetsFor(s.loggedSets, pe.exerciseId);
+      perExerciseGroups[i] = groups;
+      if (groups == 0) {
         firstZero ??= i;
-      } else if (sets.length < pe.targetSets) {
+      } else if (groups < pe.targetSets) {
         lastPartial = i; // overwrite so we end up with the LAST partial
       }
     }
@@ -52,6 +65,7 @@ class WorkoutProgress {
         activeIndex: s.queue.length,
         exercise: null,
         setsForActive: const [],
+        completedSets: 0,
       );
     }
     return WorkoutProgress._(
@@ -59,6 +73,7 @@ class WorkoutProgress {
       activeIndex: pickedIdx,
       exercise: s.queue[pickedIdx],
       setsForActive: perExerciseSets[pickedIdx]!,
+      completedSets: perExerciseGroups[pickedIdx]!,
     );
   }
 }

@@ -123,13 +123,21 @@ enum WatchMutationType {
 class WatchSet {
   WatchSet({
     required this.id,
+    required this.exerciseId,
     required this.reps,
     required this.weightKg,
     required this.rir,
     required this.loggedAtMs,
+    this.setGroup,
+    required this.groupSeq,
   });
 
   String id;
+
+  /// The set's own exercise — so an inbound watch set is attributed by identity,
+  /// not the (possibly-advanced) cursor. Critical for drop sets, whose drops
+  /// arrive after the top set may have already advanced the cursor.
+  String exerciseId;
 
   int reps;
 
@@ -139,13 +147,22 @@ class WatchSet {
 
   int loggedAtMs;
 
+  /// Set-group primitive (drop set now, superset later). NULL => singleton.
+  String? setGroup;
+
+  /// Order within the group: 0 = top, 1..N = drops.
+  int groupSeq;
+
   List<Object?> _toList() {
     return <Object?>[
       id,
+      exerciseId,
       reps,
       weightKg,
       rir,
       loggedAtMs,
+      setGroup,
+      groupSeq,
     ];
   }
 
@@ -156,10 +173,13 @@ class WatchSet {
     result as List<Object?>;
     return WatchSet(
       id: result[0]! as String,
-      reps: result[1]! as int,
-      weightKg: result[2]! as double,
-      rir: result[3]! as int,
-      loggedAtMs: result[4]! as int,
+      exerciseId: result[1]! as String,
+      reps: result[2]! as int,
+      weightKg: result[3]! as double,
+      rir: result[4]! as int,
+      loggedAtMs: result[5]! as int,
+      setGroup: result[6] as String?,
+      groupSeq: result[7]! as int,
     );
   }
 
@@ -172,7 +192,7 @@ class WatchSet {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(id, other.id) && _deepEquals(reps, other.reps) && _deepEquals(weightKg, other.weightKg) && _deepEquals(rir, other.rir) && _deepEquals(loggedAtMs, other.loggedAtMs);
+    return _deepEquals(id, other.id) && _deepEquals(exerciseId, other.exerciseId) && _deepEquals(reps, other.reps) && _deepEquals(weightKg, other.weightKg) && _deepEquals(rir, other.rir) && _deepEquals(loggedAtMs, other.loggedAtMs) && _deepEquals(setGroup, other.setGroup) && _deepEquals(groupSeq, other.groupSeq);
   }
 
   @override
@@ -181,7 +201,7 @@ class WatchSet {
 
   @override
   String toString() {
-    return 'WatchSet(id: $id, reps: $reps, weightKg: $weightKg, rir: $rir, loggedAtMs: $loggedAtMs)';
+    return 'WatchSet(id: $id, exerciseId: $exerciseId, reps: $reps, weightKg: $weightKg, rir: $rir, loggedAtMs: $loggedAtMs, setGroup: $setGroup, groupSeq: $groupSeq)';
   }
 }
 
@@ -197,6 +217,8 @@ class WatchExercise {
     required this.defaultWeightKg,
     this.weightStepKg,
     required this.isOverridden,
+    required this.skipped,
+    required this.dropCount,
     required this.loggedSets,
   });
 
@@ -222,6 +244,15 @@ class WatchExercise {
   /// badge on the watch; swapping is phone-only).
   bool isOverridden;
 
+  /// True when this slot was skipped for the session on the phone (skip is
+  /// phone-only, like swapping). The watch renders it struck-through and walks
+  /// its cursor past it; the slot stays in the queue so indices line up.
+  bool skipped;
+
+  /// 0 = normal; N ≥ 1 = each working set is a drop set with N drops after the
+  /// top. The watch extends its logger with reps+weight page(s) per drop.
+  int dropCount;
+
   List<WatchSet> loggedSets;
 
   List<Object?> _toList() {
@@ -235,6 +266,8 @@ class WatchExercise {
       defaultWeightKg,
       weightStepKg,
       isOverridden,
+      skipped,
+      dropCount,
       loggedSets,
     ];
   }
@@ -254,7 +287,9 @@ class WatchExercise {
       defaultWeightKg: result[6]! as double,
       weightStepKg: result[7] as double?,
       isOverridden: result[8]! as bool,
-      loggedSets: (result[9]! as List<Object?>).cast<WatchSet>(),
+      skipped: result[9]! as bool,
+      dropCount: result[10]! as int,
+      loggedSets: (result[11]! as List<Object?>).cast<WatchSet>(),
     );
   }
 
@@ -267,7 +302,7 @@ class WatchExercise {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(programExerciseId, other.programExerciseId) && _deepEquals(exerciseId, other.exerciseId) && _deepEquals(name, other.name) && _deepEquals(targetSets, other.targetSets) && _deepEquals(targetRepsMin, other.targetRepsMin) && _deepEquals(targetRepsMax, other.targetRepsMax) && _deepEquals(defaultWeightKg, other.defaultWeightKg) && _deepEquals(weightStepKg, other.weightStepKg) && _deepEquals(isOverridden, other.isOverridden) && _deepEquals(loggedSets, other.loggedSets);
+    return _deepEquals(programExerciseId, other.programExerciseId) && _deepEquals(exerciseId, other.exerciseId) && _deepEquals(name, other.name) && _deepEquals(targetSets, other.targetSets) && _deepEquals(targetRepsMin, other.targetRepsMin) && _deepEquals(targetRepsMax, other.targetRepsMax) && _deepEquals(defaultWeightKg, other.defaultWeightKg) && _deepEquals(weightStepKg, other.weightStepKg) && _deepEquals(isOverridden, other.isOverridden) && _deepEquals(skipped, other.skipped) && _deepEquals(dropCount, other.dropCount) && _deepEquals(loggedSets, other.loggedSets);
   }
 
   @override
@@ -276,7 +311,7 @@ class WatchExercise {
 
   @override
   String toString() {
-    return 'WatchExercise(programExerciseId: $programExerciseId, exerciseId: $exerciseId, name: $name, targetSets: $targetSets, targetRepsMin: $targetRepsMin, targetRepsMax: $targetRepsMax, defaultWeightKg: $defaultWeightKg, weightStepKg: $weightStepKg, isOverridden: $isOverridden, loggedSets: $loggedSets)';
+    return 'WatchExercise(programExerciseId: $programExerciseId, exerciseId: $exerciseId, name: $name, targetSets: $targetSets, targetRepsMin: $targetRepsMin, targetRepsMax: $targetRepsMax, defaultWeightKg: $defaultWeightKg, weightStepKg: $weightStepKg, isOverridden: $isOverridden, skipped: $skipped, dropCount: $dropCount, loggedSets: $loggedSets)';
   }
 }
 

@@ -8,7 +8,11 @@ import 'watch_bridge.g.dart';
 
 /// Current snapshot contract version. Bump on any breaking change to the
 /// flattened projection below; the watch ignores unknown newer versions.
-const int watchSnapshotSchemaVersion = 1;
+///
+/// v2: added `WatchExercise.skipped` (durable per-session skip flag).
+/// v3: added `WatchExercise.dropCount` + `WatchSet.exerciseId/setGroup/groupSeq`
+/// (drop sets on the general set-group primitive).
+const int watchSnapshotSchemaVersion = 3;
 
 /// Pure builder mapping the phone's authoritative state — the active session,
 /// the rest timer, and user settings — into the flattened [WatchSessionSnapshot]
@@ -58,16 +62,21 @@ WatchSessionSnapshot buildWatchSnapshot({
         defaultWeightKg: pe.defaultWeightKg,
         weightStepKg: pe.weightStepKg,
         isOverridden: pe.isOverridden,
+        skipped: pe.skipped,
+        dropCount: pe.dropCount,
         loggedSets: [
           for (final s in session.loggedSets)
             if (s.exerciseId == pe.exerciseId)
               WatchSet(
                 id: s.id,
+                exerciseId: s.exerciseId,
                 reps: s.reps,
                 // Weight stays in kg on the wire; each device formats locally.
                 weightKg: s.weightKg,
                 rir: s.rir,
                 loggedAtMs: s.loggedAt.millisecondsSinceEpoch,
+                setGroup: s.setGroup,
+                groupSeq: s.groupSeq,
               ),
         ],
       ),

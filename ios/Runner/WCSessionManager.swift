@@ -299,6 +299,8 @@ extension WCSessionManager {
       // weightStepKg null => caller falls back to the unit default.
       "weightStepKg": e.weightStepKg ?? NSNull(),
       "isOverridden": e.isOverridden,
+      "skipped": e.skipped,
+      "dropCount": e.dropCount,
     ]
     obj["loggedSets"] = e.loggedSets.map { setToJSON($0) }
     return obj
@@ -307,10 +309,13 @@ extension WCSessionManager {
   private static func setToJSON(_ st: WatchSet) -> [String: Any] {
     return [
       "id": st.id,
+      "exerciseId": st.exerciseId,
       "reps": st.reps,
       "weightKg": st.weightKg,
       "rir": st.rir,
       "loggedAtMs": st.loggedAtMs,
+      "setGroup": st.setGroup ?? NSNull(),
+      "groupSeq": st.groupSeq,
     ]
   }
 
@@ -375,7 +380,19 @@ extension WCSessionManager {
           let loggedAtMs = int64(obj["loggedAtMs"]) else {
       return nil
     }
-    return WatchSet(id: id, reps: reps, weightKg: weightKg, rir: rir, loggedAtMs: loggedAtMs)
+    let exerciseId = (obj["exerciseId"] as? String) ?? ""
+    let setGroup = string(obj["setGroup"])
+    let groupSeq = int64(obj["groupSeq"]) ?? 0
+    return WatchSet(
+      id: id,
+      exerciseId: exerciseId,
+      reps: reps,
+      weightKg: weightKg,
+      rir: rir,
+      loggedAtMs: loggedAtMs,
+      setGroup: setGroup,
+      groupSeq: groupSeq
+    )
   }
 
   // MARK: Enum <-> exact lowercase wire strings

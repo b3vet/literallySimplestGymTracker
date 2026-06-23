@@ -78,9 +78,8 @@ class _ProgramStatusSheet extends ConsumerWidget {
                   Container(height: 1, color: t.surface.border),
               itemBuilder: (ctx, i) {
                 final pe = session.queue[i];
-                final logged = session.loggedSets
-                    .where((s) => s.exerciseId == pe.exerciseId)
-                    .length;
+                final logged =
+                    completedSetsFor(session.loggedSets, pe.exerciseId);
                 final state = _stateOf(session, i, logged);
                 return _ExerciseRow(
                   index: i + 1,
@@ -88,12 +87,17 @@ class _ProgramStatusSheet extends ConsumerWidget {
                   setsLogged: logged,
                   unit: unit,
                   state: state,
-                  onTap: () async {
-                    await ref
-                        .read(activeSessionProvider.notifier)
-                        .goToExerciseIndex(i);
-                    if (ctx.mounted) Navigator.pop(ctx);
-                  },
+                  // Skipped exercises are out of the session for good (v1 skip
+                  // is permanent) — their row is non-tappable so you can't jump
+                  // the cursor back onto them.
+                  onTap: state == _ExState.skipped
+                      ? null
+                      : () async {
+                          await ref
+                              .read(activeSessionProvider.notifier)
+                              .goToExerciseIndex(i);
+                          if (ctx.mounted) Navigator.pop(ctx);
+                        },
                 );
               },
             ),
@@ -107,8 +111,11 @@ class _ProgramStatusSheet extends ConsumerWidget {
 enum _ExState { done, current, upcoming, skipped }
 
 _ExState _stateOf(ActiveSession s, int i, int logged) {
+  final pe = s.queue[i];
+  // A durably-skipped slot always reads as skipped, regardless of cursor.
+  if (pe.skipped) return _ExState.skipped;
   final cur = s.cursor.exerciseIdx;
-  if (logged >= s.queue[i].targetSets) return _ExState.done;
+  if (logged >= pe.targetSets) return _ExState.done;
   if (i == cur) return _ExState.current;
   if (i < cur) return _ExState.skipped;
   return _ExState.upcoming;
@@ -117,9 +124,7 @@ _ExState _stateOf(ActiveSession s, int i, int logged) {
 int _completedCount(ActiveSession s) {
   var n = 0;
   for (var i = 0; i < s.queue.length; i++) {
-    final logged = s.loggedSets
-        .where((x) => x.exerciseId == s.queue[i].exerciseId)
-        .length;
+    final logged = completedSetsFor(s.loggedSets, s.queue[i].exerciseId);
     if (logged >= s.queue[i].targetSets) n++;
   }
   return n;
@@ -140,7 +145,7 @@ class _ExerciseRow extends StatelessWidget {
   final int setsLogged;
   final WeightUnit unit;
   final _ExState state;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {

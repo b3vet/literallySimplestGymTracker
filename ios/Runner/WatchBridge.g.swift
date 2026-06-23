@@ -205,55 +205,75 @@ enum WatchMutationType: Int, CaseIterable {
 /// Generated class from Pigeon that represents data sent in messages.
 struct WatchSet: Hashable, CustomStringConvertible {
   var id: String
+  /// The set's own exercise — so an inbound watch set is attributed by identity,
+  /// not the (possibly-advanced) cursor. Critical for drop sets, whose drops
+  /// arrive after the top set may have already advanced the cursor.
+  var exerciseId: String
   var reps: Int64
   var weightKg: Double
   var rir: Int64
   var loggedAtMs: Int64
+  /// Set-group primitive (drop set now, superset later). NULL => singleton.
+  var setGroup: String? = nil
+  /// Order within the group: 0 = top, 1..N = drops.
+  var groupSeq: Int64
 
 
   // swift-format-ignore: AlwaysUseLowerCamelCase
   static func fromList(_ pigeonVar_list: [Any?]) -> WatchSet? {
     let id = pigeonVar_list[0] as! String
-    let reps = pigeonVar_list[1] as! Int64
-    let weightKg = pigeonVar_list[2] as! Double
-    let rir = pigeonVar_list[3] as! Int64
-    let loggedAtMs = pigeonVar_list[4] as! Int64
+    let exerciseId = pigeonVar_list[1] as! String
+    let reps = pigeonVar_list[2] as! Int64
+    let weightKg = pigeonVar_list[3] as! Double
+    let rir = pigeonVar_list[4] as! Int64
+    let loggedAtMs = pigeonVar_list[5] as! Int64
+    let setGroup: String? = nilOrValue(pigeonVar_list[6])
+    let groupSeq = pigeonVar_list[7] as! Int64
 
     return WatchSet(
       id: id,
+      exerciseId: exerciseId,
       reps: reps,
       weightKg: weightKg,
       rir: rir,
-      loggedAtMs: loggedAtMs
+      loggedAtMs: loggedAtMs,
+      setGroup: setGroup,
+      groupSeq: groupSeq
     )
   }
   func toList() -> [Any?] {
     return [
       id,
+      exerciseId,
       reps,
       weightKg,
       rir,
       loggedAtMs,
+      setGroup,
+      groupSeq,
     ]
   }
   static func == (lhs: WatchSet, rhs: WatchSet) -> Bool {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return WatchBridgePigeonInternal.deepEquals(lhs.id, rhs.id) && WatchBridgePigeonInternal.deepEquals(lhs.reps, rhs.reps) && WatchBridgePigeonInternal.deepEquals(lhs.weightKg, rhs.weightKg) && WatchBridgePigeonInternal.deepEquals(lhs.rir, rhs.rir) && WatchBridgePigeonInternal.deepEquals(lhs.loggedAtMs, rhs.loggedAtMs)
+    return WatchBridgePigeonInternal.deepEquals(lhs.id, rhs.id) && WatchBridgePigeonInternal.deepEquals(lhs.exerciseId, rhs.exerciseId) && WatchBridgePigeonInternal.deepEquals(lhs.reps, rhs.reps) && WatchBridgePigeonInternal.deepEquals(lhs.weightKg, rhs.weightKg) && WatchBridgePigeonInternal.deepEquals(lhs.rir, rhs.rir) && WatchBridgePigeonInternal.deepEquals(lhs.loggedAtMs, rhs.loggedAtMs) && WatchBridgePigeonInternal.deepEquals(lhs.setGroup, rhs.setGroup) && WatchBridgePigeonInternal.deepEquals(lhs.groupSeq, rhs.groupSeq)
   }
 
   func hash(into hasher: inout Hasher) {
     hasher.combine("WatchSet")
     WatchBridgePigeonInternal.deepHash(value: id, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: exerciseId, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: reps, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: weightKg, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: rir, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: loggedAtMs, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: setGroup, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: groupSeq, hasher: &hasher)
   }
 
   public var description: String {
-    return "WatchSet(id: \(String(describing: id)), reps: \(String(describing: reps)), weightKg: \(String(describing: weightKg)), rir: \(String(describing: rir)), loggedAtMs: \(String(describing: loggedAtMs)))"
+    return "WatchSet(id: \(String(describing: id)), exerciseId: \(String(describing: exerciseId)), reps: \(String(describing: reps)), weightKg: \(String(describing: weightKg)), rir: \(String(describing: rir)), loggedAtMs: \(String(describing: loggedAtMs)), setGroup: \(String(describing: setGroup)), groupSeq: \(String(describing: groupSeq)))"
   }
 }
 
@@ -274,6 +294,13 @@ struct WatchExercise: Hashable, CustomStringConvertible {
   /// True when this slot was substituted on the phone (read-only "SUBSTITUTED"
   /// badge on the watch; swapping is phone-only).
   var isOverridden: Bool
+  /// True when this slot was skipped for the session on the phone (skip is
+  /// phone-only, like swapping). The watch renders it struck-through and walks
+  /// its cursor past it; the slot stays in the queue so indices line up.
+  var skipped: Bool
+  /// 0 = normal; N ≥ 1 = each working set is a drop set with N drops after the
+  /// top. The watch extends its logger with reps+weight page(s) per drop.
+  var dropCount: Int64
   var loggedSets: [WatchSet]
 
 
@@ -288,7 +315,9 @@ struct WatchExercise: Hashable, CustomStringConvertible {
     let defaultWeightKg = pigeonVar_list[6] as! Double
     let weightStepKg: Double? = nilOrValue(pigeonVar_list[7])
     let isOverridden = pigeonVar_list[8] as! Bool
-    let loggedSets = pigeonVar_list[9] as! [WatchSet]
+    let skipped = pigeonVar_list[9] as! Bool
+    let dropCount = pigeonVar_list[10] as! Int64
+    let loggedSets = pigeonVar_list[11] as! [WatchSet]
 
     return WatchExercise(
       programExerciseId: programExerciseId,
@@ -300,6 +329,8 @@ struct WatchExercise: Hashable, CustomStringConvertible {
       defaultWeightKg: defaultWeightKg,
       weightStepKg: weightStepKg,
       isOverridden: isOverridden,
+      skipped: skipped,
+      dropCount: dropCount,
       loggedSets: loggedSets
     )
   }
@@ -314,6 +345,8 @@ struct WatchExercise: Hashable, CustomStringConvertible {
       defaultWeightKg,
       weightStepKg,
       isOverridden,
+      skipped,
+      dropCount,
       loggedSets,
     ]
   }
@@ -321,7 +354,7 @@ struct WatchExercise: Hashable, CustomStringConvertible {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return WatchBridgePigeonInternal.deepEquals(lhs.programExerciseId, rhs.programExerciseId) && WatchBridgePigeonInternal.deepEquals(lhs.exerciseId, rhs.exerciseId) && WatchBridgePigeonInternal.deepEquals(lhs.name, rhs.name) && WatchBridgePigeonInternal.deepEquals(lhs.targetSets, rhs.targetSets) && WatchBridgePigeonInternal.deepEquals(lhs.targetRepsMin, rhs.targetRepsMin) && WatchBridgePigeonInternal.deepEquals(lhs.targetRepsMax, rhs.targetRepsMax) && WatchBridgePigeonInternal.deepEquals(lhs.defaultWeightKg, rhs.defaultWeightKg) && WatchBridgePigeonInternal.deepEquals(lhs.weightStepKg, rhs.weightStepKg) && WatchBridgePigeonInternal.deepEquals(lhs.isOverridden, rhs.isOverridden) && WatchBridgePigeonInternal.deepEquals(lhs.loggedSets, rhs.loggedSets)
+    return WatchBridgePigeonInternal.deepEquals(lhs.programExerciseId, rhs.programExerciseId) && WatchBridgePigeonInternal.deepEquals(lhs.exerciseId, rhs.exerciseId) && WatchBridgePigeonInternal.deepEquals(lhs.name, rhs.name) && WatchBridgePigeonInternal.deepEquals(lhs.targetSets, rhs.targetSets) && WatchBridgePigeonInternal.deepEquals(lhs.targetRepsMin, rhs.targetRepsMin) && WatchBridgePigeonInternal.deepEquals(lhs.targetRepsMax, rhs.targetRepsMax) && WatchBridgePigeonInternal.deepEquals(lhs.defaultWeightKg, rhs.defaultWeightKg) && WatchBridgePigeonInternal.deepEquals(lhs.weightStepKg, rhs.weightStepKg) && WatchBridgePigeonInternal.deepEquals(lhs.isOverridden, rhs.isOverridden) && WatchBridgePigeonInternal.deepEquals(lhs.skipped, rhs.skipped) && WatchBridgePigeonInternal.deepEquals(lhs.dropCount, rhs.dropCount) && WatchBridgePigeonInternal.deepEquals(lhs.loggedSets, rhs.loggedSets)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -335,11 +368,13 @@ struct WatchExercise: Hashable, CustomStringConvertible {
     WatchBridgePigeonInternal.deepHash(value: defaultWeightKg, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: weightStepKg, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: isOverridden, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: skipped, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: dropCount, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: loggedSets, hasher: &hasher)
   }
 
   public var description: String {
-    return "WatchExercise(programExerciseId: \(String(describing: programExerciseId)), exerciseId: \(String(describing: exerciseId)), name: \(String(describing: name)), targetSets: \(String(describing: targetSets)), targetRepsMin: \(String(describing: targetRepsMin)), targetRepsMax: \(String(describing: targetRepsMax)), defaultWeightKg: \(String(describing: defaultWeightKg)), weightStepKg: \(String(describing: weightStepKg)), isOverridden: \(String(describing: isOverridden)), loggedSets: \(String(describing: loggedSets)))"
+    return "WatchExercise(programExerciseId: \(String(describing: programExerciseId)), exerciseId: \(String(describing: exerciseId)), name: \(String(describing: name)), targetSets: \(String(describing: targetSets)), targetRepsMin: \(String(describing: targetRepsMin)), targetRepsMax: \(String(describing: targetRepsMax)), defaultWeightKg: \(String(describing: defaultWeightKg)), weightStepKg: \(String(describing: weightStepKg)), isOverridden: \(String(describing: isOverridden)), skipped: \(String(describing: skipped)), dropCount: \(String(describing: dropCount)), loggedSets: \(String(describing: loggedSets)))"
   }
 }
 

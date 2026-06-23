@@ -137,7 +137,14 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     final setsLoggedForCurrent = session.loggedSets
         .where((s) => s.exerciseId == current.exerciseId)
         .toList();
-    final allTargetsHit = setsLoggedForCurrent.length >= current.targetSets;
+    // Logical sets done = distinct groups (a drop set's top+drops count once).
+    final completedForCurrent =
+        completedSetsFor(session.loggedSets, current.exerciseId);
+    final allTargetsHit = completedForCurrent >= current.targetSets;
+    // For a drop-set exercise, each logical set is a group (top + drops).
+    final dropGroups = current.isDropSet
+        ? groupedSetsFor(session.loggedSets, current.exerciseId)
+        : const <List<WorkoutSet>>[];
     final canPrev = session.cursor.exerciseIdx > 0;
     final canNext = session.cursor.exerciseIdx < session.queue.length - 1;
 
@@ -266,40 +273,68 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                   // outruns the available width.
                   _SetChipsRow(
                     count: current.targetSets,
-                    done: setsLoggedForCurrent.length,
+                    done: completedForCurrent,
                   ),
                   const SizedBox(height: LsGap.section),
                   // Set log rows — Column (not ListView) so they participate
-                  // in the page-level scroll above.
-                  for (var i = 0; i < current.targetSets; i++) ...[
-                    if (i > 0) const SizedBox(height: LsGap.sub),
-                    Builder(builder: (_) {
-                      final set = i < setsLoggedForCurrent.length
-                          ? setsLoggedForCurrent[i]
-                          : null;
-                      final isNext = set == null &&
-                          i == setsLoggedForCurrent.length;
-                      return _SetRow(
-                        index: i + 1,
-                        set: set,
-                        unit: unit,
-                        isNext: isNext,
-                        onEdit: set == null
-                            ? null
-                            : () => _editSet(current, set, i),
-                      );
-                    }),
-                  ],
+                  // in the page-level scroll above. A drop-set exercise renders
+                  // each logical set as a grouped card (top + drops); a normal
+                  // exercise renders one row per set.
+                  if (current.isDropSet)
+                    for (var i = 0; i < current.targetSets; i++) ...[
+                      if (i > 0) const SizedBox(height: LsGap.sub),
+                      if (i < dropGroups.length)
+                        _DropSetCard(
+                          index: i + 1,
+                          group: dropGroups[i],
+                          unit: unit,
+                          onEdit: () => _editDropSet(current, dropGroups[i]),
+                          onDelete: () => _deleteGroup(dropGroups[i]),
+                        )
+                      else
+                        _SetRow(
+                          index: i + 1,
+                          set: null,
+                          unit: unit,
+                          isNext: i == dropGroups.length,
+                          onEdit: null,
+                        ),
+                    ]
+                  else
+                    for (var i = 0; i < current.targetSets; i++) ...[
+                      if (i > 0) const SizedBox(height: LsGap.sub),
+                      Builder(builder: (_) {
+                        final set = i < setsLoggedForCurrent.length
+                            ? setsLoggedForCurrent[i]
+                            : null;
+                        final isNext = set == null &&
+                            i == setsLoggedForCurrent.length;
+                        return _SetRow(
+                          index: i + 1,
+                          set: set,
+                          unit: unit,
+                          isNext: isNext,
+                          onEdit: set == null
+                              ? null
+                              : () => _editSet(current, set, i),
+                        );
+                      }),
+                    ],
                 ],
               ),
             ),
           ),
           const SizedBox(height: LsGap.sub),
           LsButton(
-            label: allTargetsHit ? 'NEXT EXERCISE →' : 'LOG SET',
+            label: allTargetsHit
+                ? 'NEXT EXERCISE →'
+                : (current.isDropSet ? 'LOG DROP SET' : 'LOG SET'),
             onPressed: allTargetsHit
                 ? () => ref.read(activeSessionProvider.notifier).goNext()
-                : () => _openSetLogSheet(current, setsLoggedForCurrent.length),
+                : (current.isDropSet
+                    ? () => _logDropSet(current, completedForCurrent + 1)
+                    : () =>
+                        _openSetLogSheet(current, setsLoggedForCurrent.length)),
             expand: true,
             minHeight: LsBox.cta,
           ),
@@ -442,6 +477,107 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
             rir: result.rir,
           ),
         );
+  }
+
+  /// Log a drop set: walk the guided chain (top with RIR → drops reps+weight at
+  /// −20%), then commit the whole group at once and start rest. Cancelling any
+  /// step logs nothing (atomic).
+  Future<void> _logDropSet(PlannedExercise current, int setNumber) async {
+    final entries = await _runDropChain(current, setNumber: setNumber);
+    if (entries == null) return;
+    await ref.read(activeSessionProvider.notifier).logSetGroup(entries);
+    final restSeconds = ref.read(settingsProvider).restSeconds;
+    if (restSeconds > 0) {
+      ref.read(restTimerProvider.notifier).start(restSeconds);
+    }
+  }
+
+  /// Edit a logged drop set: re-run the chain prefilled from its entries, then
+  /// replace the group in place (no rest, no cursor move).
+  Future<void> _editDropSet(
+    PlannedExercise current,
+    List<WorkoutSet> group,
+  ) async {
+    final entries = await _runDropChain(current, setNumber: 0, existing: group);
+    if (entries == null) return;
+    await ref
+        .read(activeSessionProvider.notifier)
+        .replaceSetGroup(group.first.groupKey, entries);
+  }
+
+  /// The shared guided chain: top entry (reps·weight·RIR) then `dropCount`
+  /// drops (reps·weight, prefilled −20% of the previous). Returns the collected
+  /// entries, or null if the user cancelled any step.
+  Future<List<SetEntry>?> _runDropChain(
+    PlannedExercise current, {
+    required int setNumber,
+    List<WorkoutSet>? existing,
+  }) async {
+    final total = existing != null ? existing.length : (1 + current.dropCount);
+    final entries = <SetEntry>[];
+    double? prevWeight;
+    for (var idx = 0; idx < total; idx++) {
+      if (!mounted) return null;
+      final isTop = idx == 0;
+      final isLast = idx == total - 1;
+      final double initialWeight;
+      int? initialReps;
+      var initialRir = 0;
+      if (existing != null && idx < existing.length) {
+        initialWeight = existing[idx].weightKg;
+        initialReps = existing[idx].reps;
+        initialRir = existing[idx].rir;
+      } else if (isTop) {
+        initialWeight = current.defaultWeightKg;
+      } else {
+        // −20% of the previous entry, snapped to the step by the sheet; editable.
+        initialWeight = (prevWeight ?? current.defaultWeightKg) * 0.8;
+      }
+      final result = await showSetLogSheet(
+        context,
+        exercise: current,
+        setNumber: setNumber,
+        initialReps: initialReps,
+        initialWeightKg: initialWeight,
+        initialRir: initialRir,
+        titleOverride: isTop ? 'DROP SET · TOP' : 'DROP $idx / ${total - 1}',
+        showRir: isTop,
+        saveLabel: isLast ? 'DONE' : 'NEXT →',
+      );
+      if (result == null) return null;
+      entries.add(SetEntry(
+        reps: result.reps,
+        weightKg: result.weightKg,
+        rir: isTop ? result.rir : 0,
+      ));
+      prevWeight = result.weightKg;
+    }
+    return entries;
+  }
+
+  Future<void> _deleteGroup(List<WorkoutSet> group) async {
+    final ok = await showCupertinoModalPopup<bool>(
+      context: context,
+      builder: (ctx) => CupertinoActionSheet(
+        title: const Text('Delete this drop set?'),
+        message: const Text('All of its entries are removed.'),
+        actions: [
+          CupertinoActionSheetAction(
+            isDestructiveAction: true,
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+        cancelButton: CupertinoActionSheetAction(
+          onPressed: () => Navigator.pop(ctx),
+          child: const Text('Cancel'),
+        ),
+      ),
+    );
+    if (ok != true) return;
+    await ref
+        .read(activeSessionProvider.notifier)
+        .deleteSetGroup(group.first.groupKey);
   }
 
   Future<void> _confirmExit(ActiveSession session) async {
@@ -720,6 +856,103 @@ class _SetRow extends StatelessWidget {
               ),
               if (logged)
                 Icon(Icons.edit_outlined, size: 16, color: t.surface.text3),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A logged drop set rendered as one grouped card: the top set (with RIR) then
+/// each drop below it. Tap to edit (re-runs the chain), long-press to delete.
+class _DropSetCard extends StatelessWidget {
+  const _DropSetCard({
+    required this.index,
+    required this.group,
+    required this.unit,
+    required this.onEdit,
+    required this.onDelete,
+  });
+  final int index;
+
+  /// The group's rows sorted by groupSeq: [top, drop1, drop2, …].
+  final List<WorkoutSet> group;
+  final WeightUnit unit;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        onTap: onEdit,
+        onLongPress: onDelete,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: t.accent.accent, width: 1.0),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text(
+                    'SET ${index.toString().padLeft(2, '0')}',
+                    style: LsType.monoMeta.copyWith(
+                      color: t.surface.text2,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text('DROP SET',
+                      style: LsType.monoMicro.copyWith(color: t.accent.accent)),
+                  const Spacer(),
+                  Icon(Icons.edit_outlined, size: 16, color: t.surface.text3),
+                ],
+              ),
+              const SizedBox(height: 10),
+              for (var i = 0; i < group.length; i++) ...[
+                if (i > 0) const SizedBox(height: 6),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      child: i == 0
+                          ? const SizedBox.shrink()
+                          : Icon(Icons.south, size: 13, color: t.surface.text3),
+                    ),
+                    Text(
+                      WeightConv.format(group[i].weightKg, unit).toUpperCase(),
+                      style: LsType.monoData.copyWith(
+                        color: i == 0 ? t.accent.accent : t.surface.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    Text('  ×  ',
+                        style:
+                            LsType.monoMeta.copyWith(color: t.surface.text2)),
+                    Text(
+                      '${group[i].reps}',
+                      style: LsType.monoData.copyWith(
+                        color: t.surface.text,
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (i == 0 && group[i].rir > 0)
+                      Text('   · RIR ${group[i].rir}',
+                          style: LsType.monoMeta
+                              .copyWith(color: t.surface.text2)),
+                  ],
+                ),
+              ],
             ],
           ),
         ),

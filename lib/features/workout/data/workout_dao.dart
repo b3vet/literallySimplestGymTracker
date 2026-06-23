@@ -77,6 +77,10 @@ class WorkoutDao {
     // instead of minting a fresh uuid. Lets the phone persist a set under the
     // same id the watch already assigned so the append-only log dedupes by id.
     String? id,
+    // Set-group primitive: NULL group => singleton (a plain set). A drop set's
+    // top + drops share one [setGroup] with ascending [groupSeq].
+    String? setGroup,
+    int groupSeq = 0,
   }) async {
     final s = WorkoutSet(
       id: id ?? _uuid.v4(),
@@ -87,9 +91,22 @@ class WorkoutDao {
       weightKg: weightKg,
       rir: rir,
       loggedAt: DateTime.now(),
+      setGroup: setGroup,
+      groupSeq: groupSeq,
     );
     await _db.insert('workout_sets', s.toRow());
     return s;
+  }
+
+  /// Delete every set in a group (drop set top + drops). [groupKey] is the
+  /// effective key (`set_group ?? id`): rows match either an explicit
+  /// `set_group` or, for a singleton, their own `id`.
+  Future<void> deleteSetGroup(String groupKey) async {
+    await _db.delete(
+      'workout_sets',
+      where: 'set_group = ? OR (set_group IS NULL AND id = ?)',
+      whereArgs: [groupKey, groupKey],
+    );
   }
 
   Future<void> updateSet(WorkoutSet s) async {
@@ -259,6 +276,10 @@ extension WorkoutDaoOverrides on WorkoutDao {
     required int targetRepsMax,
     required double defaultWeightKg,
     double? weightStepKg,
+    bool skipped = false,
+    bool inserted = false,
+    double? orderPos,
+    int dropCount = 0,
   }) async {
     // Look up the existing override (if any) so we can preserve its id and
     // rotate previous_exercise_id correctly. sqflite has no UPSERT helper,
@@ -279,6 +300,10 @@ extension WorkoutDaoOverrides on WorkoutDao {
       'target_reps_max': targetRepsMax,
       'default_weight': defaultWeightKg,
       'weight_step': weightStepKg,
+      'skipped': skipped ? 1 : 0,
+      'inserted': inserted ? 1 : 0,
+      'order_pos': orderPos,
+      'drop_count': dropCount,
     };
     if (existing.isEmpty) {
       row['id'] = const Uuid().v4();
@@ -291,6 +316,39 @@ extension WorkoutDaoOverrides on WorkoutDao {
         whereArgs: [existing.first['id']],
       );
     }
+  }
+
+  /// Insert a session-only exercise as an override row with no template slot
+  /// behind it. Mints a synthetic `program_exercise_id` (the column has no FK)
+  /// and returns it; the caller uses it as the queue slot's id. [orderPos]
+  /// places it in the queue relative to the integer positions of the template
+  /// slots. Reuses [upsertOverride] so the row supports every existing mutation.
+  Future<String> insertSessionExercise({
+    required String sessionId,
+    required String exerciseId,
+    required int targetSets,
+    required int targetRepsMin,
+    required int targetRepsMax,
+    required double defaultWeightKg,
+    double? weightStepKg,
+    required double orderPos,
+    int dropCount = 0,
+  }) async {
+    final programExerciseId = const Uuid().v4();
+    await upsertOverride(
+      sessionId: sessionId,
+      programExerciseId: programExerciseId,
+      exerciseId: exerciseId,
+      targetSets: targetSets,
+      targetRepsMin: targetRepsMin,
+      targetRepsMax: targetRepsMax,
+      defaultWeightKg: defaultWeightKg,
+      weightStepKg: weightStepKg,
+      inserted: true,
+      orderPos: orderPos,
+      dropCount: dropCount,
+    );
+    return programExerciseId;
   }
 
   /// Drop the override for a slot. Used by "REVERT TO PLAN" in the
@@ -335,6 +393,10 @@ extension WorkoutDaoOverrides on WorkoutDao {
               weightStepKg: r['weight_step'] == null
                   ? null
                   : (r['weight_step'] as num).toDouble(),
+              skipped: ((r['skipped'] as num?)?.toInt() ?? 0) == 1,
+              inserted: ((r['inserted'] as num?)?.toInt() ?? 0) == 1,
+              orderPos: (r['order_pos'] as num?)?.toDouble(),
+              dropCount: (r['drop_count'] as num?)?.toInt() ?? 0,
             ))
         .toList();
   }

@@ -9,6 +9,7 @@ class ProgramExercise {
     required this.targetRepsMax,
     required this.defaultWeightKg,
     this.weightStepKg,
+    this.dropCount = 0,
   });
   final String id;
   final String programDayId;
@@ -24,6 +25,10 @@ class ProgramExercise {
   /// step (`WeightUnit.defaultStep`) for display.
   final double? weightStepKg;
 
+  /// 0 = normal exercise; N ≥ 1 = each working set is a drop set with N drops
+  /// after the top. The reps/weight targets describe the TOP set.
+  final int dropCount;
+
   ProgramExercise copyWith({
     int? position,
     int? targetSets,
@@ -32,6 +37,7 @@ class ProgramExercise {
     double? defaultWeightKg,
     double? weightStepKg,
     bool clearWeightStep = false,
+    int? dropCount,
   }) =>
       ProgramExercise(
         id: id,
@@ -43,6 +49,7 @@ class ProgramExercise {
         targetRepsMax: targetRepsMax ?? this.targetRepsMax,
         defaultWeightKg: defaultWeightKg ?? this.defaultWeightKg,
         weightStepKg: clearWeightStep ? null : (weightStepKg ?? this.weightStepKg),
+        dropCount: dropCount ?? this.dropCount,
       );
 
   factory ProgramExercise.fromRow(Map<String, Object?> row) => ProgramExercise(
@@ -55,6 +62,7 @@ class ProgramExercise {
         targetRepsMax: row['target_reps_max'] as int,
         defaultWeightKg: (row['default_weight'] as num).toDouble(),
         weightStepKg: (row['weight_step'] as num?)?.toDouble(),
+        dropCount: (row['drop_count'] as num?)?.toInt() ?? 0,
       );
 
   Map<String, Object?> toRow() => {
@@ -67,6 +75,7 @@ class ProgramExercise {
         'target_reps_max': targetRepsMax,
         'default_weight': defaultWeightKg,
         'weight_step': weightStepKg,
+        'drop_count': dropCount,
       };
 }
 

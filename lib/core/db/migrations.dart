@@ -96,3 +96,56 @@ const schemaV3Up = <String>[
   ''',
   'CREATE INDEX idx_seo_session ON session_exercise_overrides(session_id)',
 ];
+
+/// v4: durable "skip this exercise for this session" flag on the override row.
+///
+/// Skipping an exercise mid-workout used to be cursor-only (`goNext`), which
+/// `cursorAfter` overwrites on resume/watch-resync — so the skip silently
+/// evaporated. Persisting it here makes skip durable: `cursorAfter` walks past
+/// any slot with `skipped = 1`, and the queue length stays invariant (the slot
+/// is marked, never removed) so the watch's exercise index and the Live
+/// Activity's total count remain valid.
+///
+/// A skip writes (or updates) the slot's override row carrying its current
+/// exercise/targets; `previous_exercise_id` stays null for a skip that never
+/// involved a swap, so the "SUBSTITUTED" badge never mis-fires.
+const schemaV4Up = <String>[
+  'ALTER TABLE session_exercise_overrides ADD COLUMN skipped INTEGER NOT NULL DEFAULT 0',
+];
+
+/// v5: session-only inserted exercises. A lifter can add an exercise to the
+/// active session that isn't in the program day (e.g. they feel like doing it
+/// today) — for that session only; the template stays untouched.
+///
+/// Rather than a separate table, an inserted exercise is an override row with
+/// no template slot behind it: `inserted = 1` and a synthetic
+/// `program_exercise_id` (which has no FK, so a free uuid is fine). `order_pos`
+/// places it in the queue relative to the integer `position`s of the template
+/// slots (a midpoint, so it can sit right after the current exercise). This
+/// reuses every existing mutation path (add/remove-set, skip, change) — an
+/// inserted slot is just another override.
+const schemaV5Up = <String>[
+  'ALTER TABLE session_exercise_overrides ADD COLUMN inserted INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE session_exercise_overrides ADD COLUMN order_pos REAL',
+];
+
+/// v6: drop sets, built on a general **set-group** primitive (so supersets
+/// reuse it later with no refactor).
+///
+/// - `program_exercises.drop_count` / `session_exercise_overrides.drop_count`:
+///   0 = normal exercise; N ≥ 1 = each working set is a drop set with N drops
+///   after the top. Carried on the override too so the config survives a
+///   mid-session swap / edit / insert.
+/// - `workout_sets.set_group` + `group_seq`: a logged set's "back-to-back unit".
+///   The effective group key is `set_group ?? id`, so a normal set is a
+///   singleton group keyed by its own id (no backfill of existing rows). A drop
+///   set's top + drops share one `set_group`, `group_seq` 0..N. Completed-set
+///   count for an exercise = number of DISTINCT group keys among its rows
+///   (identical to row-count for normal sets). Rest fires when a group
+///   completes. Supersets later: one set per member shares a group.
+const schemaV6Up = <String>[
+  'ALTER TABLE program_exercises ADD COLUMN drop_count INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE session_exercise_overrides ADD COLUMN drop_count INTEGER NOT NULL DEFAULT 0',
+  'ALTER TABLE workout_sets ADD COLUMN set_group TEXT',
+  'ALTER TABLE workout_sets ADD COLUMN group_seq INTEGER NOT NULL DEFAULT 0',
+];

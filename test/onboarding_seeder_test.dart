@@ -11,11 +11,18 @@ Future<Database> _openInMemory() async {
   return factory.openDatabase(
     inMemoryDatabasePath,
     options: OpenDatabaseOptions(
-      version: 3,
+      version: 6,
       onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
       onCreate: (db, _) async {
         final b = db.batch();
-        for (final stmt in [...schemaV1, ...schemaV2Up, ...schemaV3Up]) {
+        for (final stmt in [
+          ...schemaV1,
+          ...schemaV2Up,
+          ...schemaV3Up,
+          ...schemaV4Up,
+          ...schemaV5Up,
+          ...schemaV6Up,
+        ]) {
           b.execute(stmt);
         }
         await b.commit(noResult: true);

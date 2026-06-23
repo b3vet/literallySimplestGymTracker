@@ -33,12 +33,22 @@ import WatchKit
 /// One logged set. `id` is the idempotency key for the append-only set log.
 struct WatchSetVM: Codable, Identifiable, Equatable {
   var id: String
+  /// Owning exercise — sent up so the phone attributes by identity, not cursor.
+  /// Optional for back-compat with pre-drop-set snapshots.
+  var exerciseId: String?
   var reps: Int
   var weightKg: Double
   var rir: Int
   // Epoch millis as Int64: watchOS device builds are arm64_32 (32-bit Int), and
   // ms-since-1970 (~1.75e12) overflows a 32-bit Int.
   var loggedAtMs: Int64
+  /// Set-group primitive (drop set). NULL => singleton group keyed by `id`.
+  var setGroup: String?
+  /// Order within the group: 0 = top, 1..N = drops.
+  var groupSeq: Int?
+
+  /// Effective group key for distinct-group counting.
+  var groupKey: String { setGroup ?? id }
 }
 
 /// One slot in the workout queue, flattened for the watch.
@@ -52,10 +62,25 @@ struct WatchExerciseVM: Codable, Identifiable, Equatable {
   var defaultWeightKg: Double
   var weightStepKg: Double?
   var isOverridden: Bool
+  /// Optional on the wire so a stale App-Group snapshot written by a
+  /// pre-skip-feature phone build still decodes (missing => not skipped).
+  var skipped: Bool?
+  /// 0/absent = normal; N ≥ 1 = each working set is a drop set with N drops.
+  var dropCount: Int?
   var loggedSets: [WatchSetVM]
 
   /// Stable identity for SwiftUI lists.
   var id: String { programExerciseId }
+
+  /// Whether this slot was skipped for the session (phone-only mutation).
+  var isSkipped: Bool { skipped ?? false }
+
+  /// Whether this is a drop-set exercise.
+  var isDropSet: Bool { (dropCount ?? 0) > 0 }
+
+  /// Logical sets completed = distinct group keys among logged rows (a drop
+  /// set's top+drops count once).
+  var completedGroups: Int { Set(loggedSets.map { $0.groupKey }).count }
 }
 
 /// The full state-of-record pushed phone -> watch.
@@ -221,10 +246,13 @@ final class WatchWorkoutModel: NSObject, WCSessionDelegate {
 
     let set = WatchSetVM(
       id: UUID().uuidString,
+      exerciseId: session.queue[session.cursorExerciseIdx].exerciseId,
       reps: reps,
       weightKg: weightKg,
       rir: rir,
-      loggedAtMs: nowMs()
+      loggedAtMs: nowMs(),
+      setGroup: nil,
+      groupSeq: 0
     )
 
     // Append (dedupe by id) to the current exercise.
@@ -235,10 +263,15 @@ final class WatchWorkoutModel: NSObject, WCSessionDelegate {
     session.queue[session.cursorExerciseIdx] = exercise
     pendingLocalSetIds.insert(set.id)
 
-    // Advance cursor when the target set count is met and there's a next slot.
-    let targetMet = exercise.loggedSets.count >= exercise.targetSets
-    if targetMet, session.cursorExerciseIdx + 1 < session.queue.count {
-      session.cursorExerciseIdx += 1
+    // Advance cursor when the target set count is met (in DISTINCT groups) and
+    // there's a next non-skipped slot. Skipped slots are walked past (they stay
+    // in the queue so indices line up with the phone).
+    let targetMet = exercise.completedGroups >= exercise.targetSets
+    var advancedTo: Int?
+    if targetMet,
+       let next = nextUnskippedIndex(after: session.cursorExerciseIdx, in: session.queue) {
+      session.cursorExerciseIdx = next
+      advancedTo = next
     }
 
     self.session = session
@@ -248,11 +281,65 @@ final class WatchWorkoutModel: NSObject, WCSessionDelegate {
     sendMutation(makeMutation(.logSet, sessionId: sessionId, set: set))
 
     // If the cursor advanced as a result of this set, tell the phone (LWW cursor).
-    if targetMet, let cursor = self.session?.cursorExerciseIdx {
+    if let cursor = advancedTo {
       sendMutation(makeMutation(.gotoExercise, sessionId: sessionId, exerciseIdx: cursor))
     }
 
     // Auto-start rest after a logged set if a default is configured.
+    if session.restDefaultSeconds > 0 {
+      startRest(sec: session.restDefaultSeconds)
+    }
+  }
+
+  /// Log a drop set as ONE logical set: the top + its drops share a `set_group`
+  /// (so it counts once), each is sent as a logSet mutation (the phone
+  /// attributes by `exerciseId`, not the cursor), the cursor advances on the
+  /// distinct-group target, then rest auto-starts. Atomic: the UI collects all
+  /// entries before calling this. `rir` is only meaningful on the top entry.
+  func logSetGroup(_ entries: [(reps: Int, weightKg: Double, rir: Int)]) {
+    guard var session, let sessionId = session.sessionId,
+          !terminatedSessionIds.contains(sessionId),
+          session.queue.indices.contains(session.cursorExerciseIdx),
+          !entries.isEmpty else { return }
+
+    let exerciseId = session.queue[session.cursorExerciseIdx].exerciseId
+    let groupId = entries.count > 1 ? UUID().uuidString : nil
+    var madeSets: [WatchSetVM] = []
+    for (i, e) in entries.enumerated() {
+      let set = WatchSetVM(
+        id: UUID().uuidString,
+        exerciseId: exerciseId,
+        reps: e.reps,
+        weightKg: e.weightKg,
+        rir: e.rir,
+        loggedAtMs: nowMs(),
+        setGroup: groupId,
+        groupSeq: i
+      )
+      madeSets.append(set)
+      pendingLocalSetIds.insert(set.id)
+    }
+
+    var exercise = session.queue[session.cursorExerciseIdx]
+    exercise.loggedSets.append(contentsOf: madeSets)
+    session.queue[session.cursorExerciseIdx] = exercise
+
+    let targetMet = exercise.completedGroups >= exercise.targetSets
+    var advancedTo: Int?
+    if targetMet,
+       let next = nextUnskippedIndex(after: session.cursorExerciseIdx, in: session.queue) {
+      session.cursorExerciseIdx = next
+      advancedTo = next
+    }
+
+    self.session = session
+    WKInterfaceDevice.current().play(.success)
+    for set in madeSets {
+      sendMutation(makeMutation(.logSet, sessionId: sessionId, set: set))
+    }
+    if let cursor = advancedTo {
+      sendMutation(makeMutation(.gotoExercise, sessionId: sessionId, exerciseIdx: cursor))
+    }
     if session.restDefaultSeconds > 0 {
       startRest(sec: session.restDefaultSeconds)
     }
@@ -293,14 +380,28 @@ final class WatchWorkoutModel: NSObject, WCSessionDelegate {
     sendMutation(makeMutation(.deleteSet, sessionId: sessionId, setId: setId))
   }
 
-  /// Jump the cursor to a queue index (last-writer-wins).
+  /// Jump the cursor to a queue index (last-writer-wins). Refuses to land on a
+  /// skipped slot (skip is permanent and phone-only).
   func goToExercise(idx: Int) {
     guard var session, let sessionId = session.sessionId,
           !terminatedSessionIds.contains(sessionId),
-          session.queue.indices.contains(idx) else { return }
+          session.queue.indices.contains(idx),
+          !session.queue[idx].isSkipped else { return }
     session.cursorExerciseIdx = idx
     self.session = session
     sendMutation(makeMutation(.gotoExercise, sessionId: sessionId, exerciseIdx: idx))
+  }
+
+  /// First non-skipped queue index strictly after [idx], or nil when none
+  /// remain (the cursor then stays put — mirrors the watch's "stop on the last
+  /// exercise" behaviour rather than going to an empty finished state).
+  private func nextUnskippedIndex(after idx: Int, in queue: [WatchExerciseVM]) -> Int? {
+    var i = idx + 1
+    while i < queue.count {
+      if !queue[i].isSkipped { return i }
+      i += 1
+    }
+    return nil
   }
 
   /// Start (or restart) rest for `sec` seconds from now.

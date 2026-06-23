@@ -22,6 +22,7 @@ class ExerciseEditResult {
     required this.repsMax,
     required this.weightKg,
     required this.weightStepKg,
+    this.dropCount = 0,
     this.delete = false,
     this.revert = false,
   });
@@ -30,6 +31,9 @@ class ExerciseEditResult {
   final int repsMin;
   final int repsMax;
   final double weightKg;
+
+  /// Drop-set drops after the top set (0 = normal exercise).
+  final int dropCount;
 
   /// Per-exercise weight step in **kg**, persisted on the ProgramExercise.
   final double weightStepKg;
@@ -51,6 +55,7 @@ Future<ExerciseEditResult?> showExerciseEditSheet(
   required int initialRepsMax,
   required double initialWeightKg,
   required double? initialWeightStepKg,
+  int initialDropCount = 0,
   bool canDelete = false,
   bool canRevert = false,
 }) {
@@ -90,6 +95,7 @@ Future<ExerciseEditResult?> showExerciseEditSheet(
               initialRepsMax: initialRepsMax,
               initialWeightKg: initialWeightKg,
               initialWeightStepKg: initialWeightStepKg,
+              initialDropCount: initialDropCount,
               canDelete: canDelete,
               canRevert: canRevert,
             ),
@@ -109,6 +115,7 @@ class _ExerciseEditSheet extends ConsumerStatefulWidget {
     required this.initialRepsMax,
     required this.initialWeightKg,
     required this.initialWeightStepKg,
+    required this.initialDropCount,
     required this.canDelete,
     required this.canRevert,
   });
@@ -119,6 +126,7 @@ class _ExerciseEditSheet extends ConsumerStatefulWidget {
   final int initialRepsMax;
   final double initialWeightKg;
   final double? initialWeightStepKg;
+  final int initialDropCount;
   final bool canDelete;
   final bool canRevert;
 
@@ -131,6 +139,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
   static const int _setsMax = 10;
   static const int _repsMin = 1;
   static const int _repsMax = 50;
+  static const int _dropsMax = 4;
 
   double _weightRangeMax(WeightUnit unit) =>
       unit == WeightUnit.kg ? 300.0 : 660.0;
@@ -140,6 +149,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
   late int _repsMaxVal;
   late double _weightDisplay;
   late double _weightStep;
+  late int _dropCount;
 
   late final TextEditingController _name;
   final FocusNode _nameFocus = FocusNode();
@@ -183,6 +193,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
     _sets = widget.initialSets.clamp(_setsMin, _setsMax);
     _repsMinVal = widget.initialRepsMin.clamp(_repsMin, _repsMax);
     _repsMaxVal = widget.initialRepsMax.clamp(_repsMinVal, _repsMax);
+    _dropCount = widget.initialDropCount.clamp(0, _dropsMax);
 
     final raw = WeightConv.fromKg(widget.initialWeightKg, widget.unit);
     _weightDisplay = (raw / _weightStep).round() * _weightStep;
@@ -487,6 +498,52 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                     },
                   ),
                   const SizedBox(height: LsGap.loose),
+                  EyebrowLabel('DROP SET'),
+                  const SizedBox(height: LsGap.sub),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LsChoiceChip(
+                          label: 'OFF',
+                          selected: _dropCount == 0,
+                          expand: true,
+                          onTap: () => setState(() => _dropCount = 0),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: LsChoiceChip(
+                          label: 'ON',
+                          selected: _dropCount > 0,
+                          expand: true,
+                          onTap: () => setState(() {
+                            if (_dropCount == 0) _dropCount = 1;
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_dropCount > 0) ...[
+                    const SizedBox(height: LsGap.loose),
+                    EyebrowLabel('DROPS'),
+                    const SizedBox(height: LsGap.sub),
+                    Row(
+                      children: [
+                        for (var n = 1; n <= _dropsMax; n++) ...[
+                          if (n > 1) const SizedBox(width: 8),
+                          Expanded(
+                            child: LsChoiceChip(
+                              label: '$n',
+                              selected: _dropCount == n,
+                              expand: true,
+                              onTap: () => setState(() => _dropCount = n),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ],
+                  const SizedBox(height: LsGap.loose),
                   LsButton(
                     label: 'SAVE',
                     onPressed: _save,
@@ -537,6 +594,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                             widget.unit,
                           ),
                           weightStepKg: _weightStep,
+                          dropCount: _dropCount,
                           revert: true,
                         ),
                       ),
@@ -590,6 +648,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
         repsMax: _repsMaxVal,
         weightKg: WeightConv.toKg(_weightDisplay, widget.unit),
         weightStepKg: stepKg,
+        dropCount: _dropCount,
       ),
     );
   }
