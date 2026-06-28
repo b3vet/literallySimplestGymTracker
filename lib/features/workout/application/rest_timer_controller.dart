@@ -23,10 +23,37 @@ class RestTimerState {
 
 class RestTimerController extends Notifier<RestTimerState> {
   Timer? _expiryTimer;
+  bool _disposed = false;
 
   @override
   RestTimerState build() {
-    ref.onDispose(() => _expiryTimer?.cancel());
+    ref.onDispose(() {
+      _expiryTimer?.cancel();
+      _disposed = true;
+    });
+    // Rehydrate a rest that was running when the app was last killed or
+    // backgrounded (SOW-03). The countdown is always derived from `endsAt` vs
+    // `now`, so a force-kill loses nothing but the in-memory timer.
+    final repo = ref.read(settingsRepositoryProvider);
+    final ms = repo.readActiveRestEndsAtMs();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (ms > now) {
+      final endsAt = DateTime.fromMillisecondsSinceEpoch(ms);
+      _rescheduleExpiry(endsAt);
+      // Re-push after build settles — _pushToLiveActivity reads
+      // activeSessionProvider, which may itself be (re)building right now (so
+      // unlike start()/adjust(), which push synchronously, build() defers).
+      // Guard the ref against a dispose that lands before the microtask runs.
+      Future.microtask(() {
+        if (!_disposed) _pushToLiveActivity();
+      });
+      return RestTimerState(endsAt: endsAt);
+    }
+    if (ms > 0) {
+      // Rest expired while we were gone — clear it so no stale 0:00 shows
+      // (decision #6).
+      unawaited(repo.writeActiveRestEndsAtMs(null));
+    }
     return const RestTimerState();
   }
 
@@ -36,12 +63,14 @@ class RestTimerController extends Notifier<RestTimerState> {
     );
     _rescheduleExpiry();
     _pushToLiveActivity();
+    _persist();
   }
 
   void dismiss() {
     _expiryTimer?.cancel();
     state = const RestTimerState();
     _pushToLiveActivity();
+    _persist();
   }
 
   void adjust(int deltaSeconds) {
@@ -58,6 +87,30 @@ class RestTimerController extends Notifier<RestTimerState> {
       _rescheduleExpiry();
     }
     _pushToLiveActivity();
+    _persist();
+  }
+
+  /// Re-validate the persisted rest against the wall clock on app-resume
+  /// (decision #5). A long background can suspend [_expiryTimer]; this restores
+  /// the correct state and reschedules expiry the instant we return — covering
+  /// the case where `build()` already ran (so a cold relaunch is handled there,
+  /// and a warm resume here).
+  void rehydrate() {
+    final repo = ref.read(settingsRepositoryProvider);
+    final ms = repo.readActiveRestEndsAtMs();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (ms > now) {
+      final endsAt = DateTime.fromMillisecondsSinceEpoch(ms);
+      if (state.endsAt != endsAt) state = RestTimerState(endsAt: endsAt);
+      _rescheduleExpiry(endsAt);
+      _pushToLiveActivity();
+    } else if (state.endsAt != null || ms > 0) {
+      // Expired (or cleared elsewhere) while backgrounded — drop the banner.
+      _expiryTimer?.cancel();
+      state = const RestTimerState();
+      _pushToLiveActivity();
+      _persist();
+    }
   }
 
   /// Apply a rest end-time that arrived FROM the watch (SOW §6, last-writer-
@@ -78,15 +131,17 @@ class RestTimerController extends Notifier<RestTimerState> {
     );
     _rescheduleExpiry();
     _pushToLiveActivity();
+    _persist();
   }
 
   /// Fire a one-shot timer at the rest-end so we can push an update to clear
   /// the Live Activity countdown the moment the rest naturally completes.
   /// Without this the lock-screen widget would freeze at "0:00" until the
-  /// next start/adjust call.
-  void _rescheduleExpiry() {
+  /// next start/adjust call. [endsAtOverride] lets `build()`/`rehydrate()`
+  /// schedule before `state` is settled.
+  void _rescheduleExpiry([DateTime? endsAtOverride]) {
     _expiryTimer?.cancel();
-    final endsAt = state.endsAt;
+    final endsAt = endsAtOverride ?? state.endsAt;
     if (endsAt == null) return;
     final delay = endsAt.difference(DateTime.now());
     if (delay.isNegative) return;
@@ -97,6 +152,20 @@ class RestTimerController extends Notifier<RestTimerState> {
     if (state.endsAt == null) return;
     state = const RestTimerState();
     _pushToLiveActivity();
+    _persist();
+  }
+
+  /// Mirror the current rest to disk so it survives a force-kill (SOW-03).
+  /// Fire-and-forget: the read path (`build`/`rehydrate`) always re-validates
+  /// against `now`, so a write that lands late or never is self-healing.
+  void _persist() {
+    final repo = ref.read(settingsRepositoryProvider);
+    final endsAt = state.endsAt;
+    if (endsAt != null && endsAt.isAfter(DateTime.now())) {
+      unawaited(repo.writeActiveRestEndsAtMs(endsAt.millisecondsSinceEpoch));
+    } else {
+      unawaited(repo.writeActiveRestEndsAtMs(null));
+    }
   }
 
   void _pushToLiveActivity() {

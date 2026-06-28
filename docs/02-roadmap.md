@@ -24,9 +24,10 @@ These are done; do **not** re-spec them. They are the foundation the roadmap bui
 
 | SOW | Feature | Phase | Tier | Status |
 |---|---|---|---|---|
-| [SOW-01](sow/SOW-01-plate-calculator.md) | Plate calculator (phone + watch) | 0 — Existential | Free | ⬜ Not started |
-| [SOW-02](sow/SOW-02-data-export.md) | Data export (CSV/JSON) + trust | 0 — Existential | Free | ⬜ Not started |
-| [SOW-03](sow/SOW-03-logging-speed-and-rest-reliability.md) | Logging-speed audit + rest-timer survives app-switch/lock | 0 — Existential | Free | ⬜ Not started |
+| [SOW-01](sow/SOW-01-plate-calculator.md) | Plate calculator (phone + watch) | 0 — Existential | Free | 🟦 Built — phone analyze+tests green; watch logic verified, pending Xcode build |
+| [SOW-02](sow/SOW-02-data-export.md) | Data export (CSV/JSON) + native share bridge | 0 — Existential | Free | 🟦 Built — analyze+tests green (import-ready JSON: stable set/exercise/program ids); native `ls/share` (`ShareHandler.swift`) pending Xcode build |
+| [SOW-02b](sow/SOW-02b-workout-summary-share.md) | Workout-summary share to friends (text + image card) | 0 — Existential | Free | 🟦 Built — analyze+tests green; share entry on post-workout **and** history detail; card overflow-tested at 1080×1350; pending Xcode build |
+| [SOW-03](sow/SOW-03-logging-speed-and-rest-reliability.md) | Logging-speed audit + rest-timer survives app-switch/lock | 0 — Existential | Free | 🟦 Built — analyze+tests green (+12: rest force-kill persistence, finish/abandon-clears, sheet prefill); 1-tap repeat-last-set chip + last-set prefill (phone + watch); rest restored at launch, banner on RESUME tap (§4c no-new-UI); force-kill/Live-Activity device matrix (§8 M1–M11) + watch Swift pending hardware |
 | [SOW-04](sow/SOW-04-warmup-calculator.md) | Warm-up set calculator | 1 — Trust/Table-stakes | Free | ⬜ Not started |
 | [SOW-05](sow/SOW-05-sync-reliability-and-trust-claims.md) | Sync reliability hardening + "never overwrites" claim | 1 — Trust/Table-stakes | Free | ⬜ Not started |
 | [SOW-06](sow/SOW-06-monetization-foundation.md) | Monetization foundation (entitlement, lifetime+annual, paywall) | 2 — Moat | Infra | ⬜ Not started |
@@ -34,6 +35,7 @@ These are done; do **not** re-spec them. They are the foundation the roadmap bui
 | [SOW-08](sow/SOW-08-supersets.md) | Supersets (surface the set-group primitive) | 2 — Moat | Free | ⬜ Not started |
 | [SOW-09](sow/SOW-09-hrv-readiness.md) | HRV readiness modifier | 3 — Surpass | Paid | ⬜ Not started |
 | [SOW-10](sow/SOW-10-advanced-analytics.md) | Advanced analytics & trends | 3 — Surpass | Paid | ⬜ Not started |
+| [SOW-12](sow/SOW-12-data-import.md) | Data import / restore (JSON round-trip) | 0/1 — Trust | Free | ⬜ Not started (committed next block) |
 
 ## Phase 0 — Existential (pre-launch, weeks, cheap)
 **Goal:** be undeniably credible and undeniably free on day one. Nothing here is optional.
@@ -62,7 +64,9 @@ These are done; do **not** re-spec them. They are the foundation the roadmap bui
 - **SOW-10 Advanced analytics & trends (PAID)** — the willing-to-pay upgrade for data nerds; additive only.
 
 ## Deferred (build only on a deliberate pivot to beginner acquisition)
-⏸ In-app program library · exercise video library · social feed · computer-vision form check · Android · Wear OS · cellular-standalone watch parity. Each is bloat for the target segment or a losing fight on a rival's turf. **The discipline of not building these is the strategy.**
+⏸ In-app program library · exercise video library · **in-app social feed** (following / likes / comments) · computer-vision form check · Android · Wear OS · cellular-standalone watch parity. Each is bloat for the target segment or a losing fight on a rival's turf. **The discipline of not building these is the strategy.**
+
+> **Not deferred — encouraged:** *outbound* "share my workout to a friend" (SOW-02b) is the **opposite** of an in-app feed. It's the word-of-mouth/viral loop the strategy says we lack, with none of the feed's bloat. Share-to-chat ≠ social feed.
 
 ## Schema & build-order coordination (read before implementing)
 Several SOWs were written independently and each assumes it owns the *next* schema version. They cannot all be right — reconcile at build time:

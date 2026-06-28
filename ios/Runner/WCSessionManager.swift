@@ -282,6 +282,8 @@ extension WCSessionManager {
       "cursorExerciseIdx": s.cursorExerciseIdx,
       "restEndsAtMs": s.restEndsAtMs,
       "restDefaultSeconds": s.restDefaultSeconds,
+      "barWeightKg": s.barWeightKg,
+      "plateInventoryKg": s.plateInventoryKg,
     ]
     obj["queue"] = s.queue.map { exerciseToJSON($0) }
     return try serialize(obj)

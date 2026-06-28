@@ -20,6 +20,7 @@
 		E6041C582FE098B300B92D95 /* LSWatch Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = E6041C4E2FE098B000B92D95 /* LSWatch Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		E6041C622FE09AC800B92D95 /* WatchBridge.g.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6041C602FE09AC800B92D95 /* WatchBridge.g.swift */; };
 		E6041C632FE09AC800B92D95 /* WCSessionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6041C612FE09AC800B92D95 /* WCSessionManager.swift */; };
+		E6CA11C0DA7A000000000002 /* ShareHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E6CA11C0DA7A000000000001 /* ShareHandler.swift */; };
 		E6884C2A2FB134300015772D /* WidgetKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E6884C292FB134300015772D /* WidgetKit.framework */; };
 		E6884C2C2FB134300015772D /* SwiftUI.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = E6884C2B2FB134300015772D /* SwiftUI.framework */; };
 		E6884C3B2FB134320015772D /* WorkoutLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E6884C272FB134300015772D /* WorkoutLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -110,6 +111,7 @@
 		E6041C4E2FE098B000B92D95 /* LSWatch Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "LSWatch Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6041C602FE09AC800B92D95 /* WatchBridge.g.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WatchBridge.g.swift; path = Runner/WatchBridge.g.swift; sourceTree = "<group>"; };
 		E6041C612FE09AC800B92D95 /* WCSessionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = WCSessionManager.swift; path = Runner/WCSessionManager.swift; sourceTree = "<group>"; };
+		E6CA11C0DA7A000000000001 /* ShareHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = ShareHandler.swift; path = Runner/ShareHandler.swift; sourceTree = "<group>"; };
 		E6884C272FB134300015772D /* WorkoutLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = WorkoutLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		E6884C292FB134300015772D /* WidgetKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WidgetKit.framework; path = System/Library/Frameworks/WidgetKit.framework; sourceTree = SDKROOT; };
 		E6884C2B2FB134300015772D /* SwiftUI.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SwiftUI.framework; path = System/Library/Frameworks/SwiftUI.framework; sourceTree = SDKROOT; };
@@ -215,6 +217,7 @@
 			children = (
 				E6041C602FE09AC800B92D95 /* WatchBridge.g.swift */,
 				E6041C612FE09AC800B92D95 /* WCSessionManager.swift */,
+				E6CA11C0DA7A000000000001 /* ShareHandler.swift */,
 				E6884C492FB137630015772D /* WorkoutLiveActivityExtension.entitlements */,
 				9740EEB11CF90186004384FC /* Flutter */,
 				97C146F01CF9000F007C117D /* Runner */,
@@ -579,6 +582,7 @@
 				74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */,
 				E6041C622FE09AC800B92D95 /* WatchBridge.g.swift in Sources */,
 				E6041C632FE09AC800B92D95 /* WCSessionManager.swift in Sources */,
+				E6CA11C0DA7A000000000002 /* ShareHandler.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

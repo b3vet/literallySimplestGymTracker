@@ -1,3 +1,4 @@
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -11,6 +12,8 @@ import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../../../core/widgets/pickers/picker_column.dart';
 import '../domain/active_session.dart';
+import '../domain/plate_math.dart';
+import 'plate_line.dart';
 
 class SetLogResult {
   const SetLogResult({
@@ -148,9 +151,20 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
+    final settings = ref.watch(settingsProvider);
+    final unit = settings.unit ?? WeightUnit.kg;
     final weightCount = (_weightRangeMax(unit) / _weightStep).round() + 1;
     final t = LsTheme.of(context);
+
+    // The wheel value is in the DISPLAY unit — convert to kg before solving so
+    // the plate math (always kg) lines up with the bar + inventory (also kg).
+    // Recomputes every build, i.e. synchronously inside the wheel's onChanged
+    // setState — no async, no DB, no extra tap.
+    final plateResult = solvePlates(
+      targetKg: WeightConv.toKg(_weightDisplay, unit),
+      barKg: settings.barWeightKg,
+      inventoryKg: settings.plateInventoryKg,
+    );
 
     // If the user flips the unit setting while the sheet is open, snap the
     // wheel step over so the picker stays in the same number-system.
@@ -276,6 +290,14 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
             ],
           ),
         ),
+        const SizedBox(height: LsGap.section),
+        // Passive per-side plate breakdown for the current wheel weight.
+        // Read-only except the "BAR n" affordance, which opens the bar chooser.
+        PlateLine(
+          result: plateResult,
+          unit: unit,
+          onBarTap: () => showBarChooserSheet(context, ref, unit),
+        ),
         const SizedBox(height: LsGap.loose),
         LsButton(
           label: widget.saveLabel,
@@ -304,4 +326,42 @@ class _SetLogSheetState extends ConsumerState<_SetLogSheet> {
       ),
     );
   }
+}
+
+/// The common-bar chooser. Shared by the set-logger's "BAR n" affordance and
+/// the Settings "Default bar" row. Lists the three standard Olympic bars
+/// (20 / 15 / 10 kg) labelled in the user's display [unit]; the chosen value is
+/// always converted back to kg before being stored, since bar weight — like
+/// every weight in the app — is persisted in kg.
+Future<void> showBarChooserSheet(
+  BuildContext context,
+  WidgetRef ref,
+  WeightUnit unit,
+) {
+  // Standard bar weights, in kg. The label is rendered in the display unit.
+  const barsKg = <double>[20.0, 15.0, 10.0];
+  final currentKg = ref.read(settingsProvider).barWeightKg;
+  return showCupertinoModalPopup<void>(
+    context: context,
+    builder: (ctx) => CupertinoActionSheet(
+      title: const Text('Barbell weight'),
+      actions: [
+        for (final barKg in barsKg)
+          CupertinoActionSheetAction(
+            onPressed: () {
+              ref.read(settingsProvider.notifier).setBarWeightKg(barKg);
+              Navigator.pop(ctx);
+            },
+            child: Text(
+              '${WeightConv.format(barKg, unit).toUpperCase()}'
+              '${(barKg - currentKg).abs() < 1e-6 ? '  ✓' : ''}',
+            ),
+          ),
+      ],
+      cancelButton: CupertinoActionSheetAction(
+        onPressed: () => Navigator.pop(ctx),
+        child: const Text('Cancel'),
+      ),
+    ),
+  );
 }

@@ -10,6 +10,8 @@ import '../../../core/util/weight.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
+import '../../share/domain/workout_summary.dart';
+import '../../share/presentation/share_summary_button.dart';
 import '../../workout/application/active_workout_controller.dart';
 import '../../workout/domain/active_session.dart';
 import '../../workout/domain/workout_set.dart';
@@ -24,9 +26,29 @@ class SessionDetailScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final data = ref.watch(sessionDetailProvider(sessionId));
+    final prs = ref.watch(sessionPrsProvider(sessionId));
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
+
+    // Share affordance: present only once the session has loaded, so the card /
+    // text are built from real data. A completed history session shares the same
+    // branded card + text block as the post-workout summary (SOW-02b AC #1).
+    final detail = data.value;
+    Widget? shareButton;
+    if (detail != null) {
+      final summary = WorkoutSummary.fromSession(
+        date: detail.session.startedAt,
+        duration: detail.session.duration,
+        sets: detail.sets,
+        exerciseNames: detail.exerciseNames,
+        prs: prs.value ?? const {},
+        programName: detail.programName,
+        dayName: detail.dayName,
+      );
+      shareButton = ShareSummaryButton(summary: summary, unit: unit);
+    }
+
     return LsScreen(
-      topbar: const LsTopbar(title: 'Workout'),
+      topbar: LsTopbar(title: 'Workout', trailing: shareButton),
       child: data.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),

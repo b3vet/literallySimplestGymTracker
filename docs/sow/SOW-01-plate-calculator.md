@@ -1,6 +1,6 @@
 # SOW-01 — Plate Calculator
 
-> **Status:** ⬜ Not started · **Phase:** 0 — Existential · **Tier:** Free
+> **Status:** 🟦 Built — phone side `flutter analyze` + 82 tests green; watch side ported + logic-verified via swiftc, **pending an Xcode build/device check** · **Phase:** 0 — Existential · **Tier:** Free
 > **Owner:** berke · **Est. size:** M
 > **Strategic rationale:** Closes the single *existential* day-1 credibility gap — every credible rival (Strong, StrongLifts, Boostcamp, Liftin') ships a plate calculator, and its absence shows up in rivals' negative reviews (RP, Juggernaut). See [01-strategy-and-positioning.md](../01-strategy-and-positioning.md) ("nail trust, speed, and the plate calculator first") and [00-competitive-analysis.md](../00-competitive-analysis.md) ("Plate calculator — the one *existential* day-1 gap … **We don't have one.**").
 
@@ -316,3 +316,27 @@ void main() {
 - **Shippable bar:** `solvePlates` is correct and fully unit-tested; the inline readout is live in the set logger and on the active-workout card; the watch shows the matching breakdown offline; bar + inventory persist and default sanely; logging speed is unchanged; no DB version bump.
 - **Positioning claim unlocked:** the existential day-1 gap is closed — LS now matches every credible rival on the plate calculator and **surpasses** them by surfacing it inline-while-dialing, on the card, and on the wrist. This is a prerequisite for the [02-roadmap.md](../02-roadmap.md) Phase 0 gate ("do not advance until logging speed + plate calculator are demonstrably best-in-class").
 - **Roadmap update:** flip [SOW-01 in 02-roadmap.md](../02-roadmap.md) from `⬜ Not started` to `✅ Shipped`, and confirm in the Phase 0 section that the gate's plate-calculator condition is met.
+
+---
+
+## 11. Implementation notes (build — 2026-06-23)
+
+**What shipped vs the spec.** Built as specced (inline readout in the set logger + active-workout card + watch; kg-canonical storage; SharedPreferences config; no DB bump — `_dbVersion` stays 6). Files: new `lib/features/workout/domain/plate_math.dart`, `application/plate_format.dart`, `presentation/plate_line.dart`; settings (`settings_repository.dart` / `settings_provider.dart` — `barWeightKg` + `plateInventoryKg`); UI (`set_log_sheet.dart`, `active_workout_screen.dart`, `settings_screen.dart`); watch (`pigeons/watch_bridge.dart` + regen, `watch_snapshot.dart`, `WCSessionManager.swift`, `WatchWorkoutModel.swift`, new `PlateMath.swift`, `SetLoggerView.swift`, `CurrentExerciseView.swift`).
+
+**Deviations / corrections from the spec (all verified):**
+- **Algorithm: bounded min-plates DP, not greedy.** Adversarial review proved plain greedy-descending misses exact solutions on non-canonical inventories reachable via the plate editor (e.g. `{25,20,15} @ 90 kg` → greedy returns `[25]`=70 kg "−20", but `20+15`=90 kg exact exists) — a direct violation of decision #8's honesty pillar. Replaced with a min-plate subset-sum DP (centi-kg integer grid; respects pair caps; exact when reachable, else true nearest-below). Mirrored line-for-line in `PlateMath.swift` (logic compiled + verified with swiftc).
+- **Two SOW-draft test expectations were wrong and were corrected:** 100 kg → `[25,15]` (greedy-minimal, fewer plates), not `[20,15,5]`; below-bar delta is **positive** (loading the empty bar over-shoots a below-bar target), not negative. `deltaKg` is a consistent signed `achievable − target`.
+- **Signed delta added** to the closest-achievable readout (phone + watch), e.g. `≈ 97.5  25 + 10 + 2.5 + 1.25 (−0.5)` (was missing vs §4 mock).
+- **Empty-inventory floor:** the plate editor now keeps ≥ 1 denomination selected (an empty inventory would misleadingly read "BAR ONLY").
+- **lb ≈-total consistency:** the approximate total is derived from the displayed (rounded) plates so it always equals their sum in lb.
+- **lb plates** still display the kg set converted (decision #5) — a true lb plate set (45/35/25/10/5/2.5 + 45 lb bar) remains a fast-follow.
+
+**Tests:** `plate_math_test.dart` (17, incl. the non-canonical regression cases), `plate_format_test.dart` (11, incl. lb-consistency + delta), `settings_plate_roundtrip_test.dart` (2). Full suite 82 green; `flutter analyze` clean. **Not added:** a `set_log_sheet` widget-pump test (the synchronous-recompute path is structurally guaranteed — it runs in `build()` — and was verified by inspection; a pump test is a low-priority follow-up).
+
+**⚠ Before flipping to ✅ Shipped — manual Xcode verification (watch cannot compile here):**
+1. Build BOTH targets (Runner + LSWatch Watch App). Confirm new `PlateMath.swift` is in the **watch** target's Compile Sources (it should auto-join via the synchronized group — it must NOT join Runner, which has its own formatter).
+2. Phone↔watch parity on a real/paired device: same breakdown for the same inputs.
+3. Plate line fits 40/41 mm (incl. the longer `≈ … (−x)` and lb cases) via `.minimumScaleFactor`.
+4. Live recompute as the Crown turns; bar chooser + plate editor persist.
+
+**Out-of-scope artifact:** an agent created `docs/PRIVACY_POLICY.md` during the watch work (accurate, but not part of this SOW) — left untracked for you to keep or remove.

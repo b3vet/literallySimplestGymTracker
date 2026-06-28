@@ -112,6 +112,8 @@ class WatchSessionSnapshot {
     required this.cursorExerciseIdx,
     required this.restEndsAtMs,
     required this.restDefaultSeconds,
+    required this.barWeightKg,
+    required this.plateInventoryKg,
     required this.queue,
   });
 
@@ -140,6 +142,14 @@ class WatchSessionSnapshot {
   /// Default rest length in seconds, so the watch can auto-start rest after a
   /// logged set (mirrors the phone setting).
   int restDefaultSeconds;
+
+  /// Empty-bar weight in kg (mirrors the phone setting), so the watch can
+  /// compute the per-side plate breakdown offline.
+  double barWeightKg;
+
+  /// Available plate denominations in kg (mirrors the phone setting), so the
+  /// watch can solve the per-side plate breakdown offline.
+  List<double> plateInventoryKg;
 
   List<WatchExercise> queue;
 }

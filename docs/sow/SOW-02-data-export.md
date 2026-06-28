@@ -28,7 +28,8 @@ Every SOW in this folder follows this structure. Keep it grounded in real files 
   - **Minimal dependency footprint.** One small, well-maintained dependency at most (see Locked decision #1).
 
 - **Non-goals**
-  - **No import** (round-trip restore is a separate, later SOW — JSON is designed to *enable* it, but import is out of scope here).
+  - **No import here** — round-trip restore is **[SOW-12](SOW-12-data-import.md)**, the committed next SOW. The JSON format here is deliberately built **import-ready** (stable ids, units metadata, schema `version`) so SOW-12 is a clean consumer.
+  - **No workout-*summary* share here** — sharing one session's results to a friend (text + image card) is **[SOW-02b](SOW-02b-workout-summary-share.md)**, which reuses this SOW's native share bridge.
   - **No cloud / iCloud sync, no email automation** — share sheet only; the user chooses the destination.
   - **No selective/date-range export, no per-session export** — one button, whole history. (Per-session export can come later; it's the *narrow* version Strong already has.)
   - **No PDF / pretty report.** CSV + JSON only.
@@ -50,7 +51,7 @@ Every SOW in this folder follows this structure. Keep it grounded in real files 
 
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
-| 1 | Share mechanism | **Add `share_plus` (^11.x)** for the iOS share sheet; write temp files via the already-present `path_provider` (^2.1.5, `pubspec.yaml`). | The user prefers minimal/first-party deps, so this was weighed against rolling a native `UIActivityViewController` over a Pigeon/MethodChannel bridge. `share_plus` is a **flutter.dev-published, federated-plugin** package (the closest thing to first-party), is already the de-facto standard, and saves us hand-writing + maintaining Swift platform code plus a Pigeon contract for a one-shot feature. The bridge alternative is *more* surface area (Swift + `pigeons/`), not less. Net: one vetted dependency beats bespoke native glue. **Rejected:** custom native share bridge (maintenance cost, no payoff); writing to Documents dir + a "Files" prompt (worse UX, still needs a share entry point). |
+| 1 | Share mechanism | **Custom native share bridge** — a thin `MethodChannel('ls/share')` → `UIActivityViewController` in a new `ios/Runner/ShareHandler.swift`. **No new pub dependency.** Temp files via the already-present `path_provider`. | **DECIDED WITH OWNER (2026-06-23).** Matches the project's hand-rolled-native ethos (the custom `WCSessionManager` + Pigeon watch bridge was chosen over a connectivity plugin for exactly this reason) and the owner's no-dep preference. The bridge is ~30 lines of standard Swift + a one-method channel, and is **shared infrastructure reused by [SOW-02b](SOW-02b-workout-summary-share.md)** (workout-summary share) — its cost amortizes across two features. Exposed in Dart as a `shareService` (one `shareFiles(paths, {text})` method). **Rejected:** `share_plus` plugin (an unneeded pub dependency for two share call-sites); Documents-dir + Files prompt (worse UX). |
 | 2 | File formats | **Both CSV and JSON**, attached together in one share invocation. | CSV is human-readable (Excel/Sheets); JSON is portable/machine-readable and re-import-ready. Both is cheap once data is gathered once. |
 | 3 | CSV granularity | **One row per logged set** (the `workout_sets` grain). | Matches the lowest atom of truth; aggregation is the consumer's job. Mirrors how `setsForSession` already returns rows (`workout_dao.dart:121`). |
 | 4 | Weight columns | Emit **both** `weight_display` (+ `unit`) **and** `weight_kg`. | kg is the storage unit (`weight` column stores kg; `weight.dart` converts). Dual columns make the file self-describing and lossless. |
@@ -92,7 +93,7 @@ A new **"DATA"** section in Settings, placed after **THEME** / **LOCK SCREEN** a
 
 - **Settings/flags:** none. No SharedPreferences key needed (it's a stateless action).
 - **Watch bridge / Pigeon:** none (`pigeons/watch_bridge.dart` untouched).
-- **New dependency:** `share_plus: ^11.0.0` added under `dependencies` in `pubspec.yaml` (next to `path_provider`). Run `flutter pub get`; iOS needs no extra `Info.plist` keys for outbound share.
+- **New dependency:** **none.** The share sheet is invoked through a custom `MethodChannel('ls/share')` handled by a new `ios/Runner/ShareHandler.swift` (a thin `UIActivityViewController` presenter, registered in `AppDelegate`). Shared with SOW-02b. iOS needs no extra `Info.plist` keys for outbound share. The channel can also expose `appVersion` from `Bundle.main` (dep-free), used in the export metadata.
 
 ## 6. Implementation plan
 
@@ -119,7 +120,7 @@ Ordered by layer. New files live under `lib/features/export/`.
   2. Read display unit from `settingsProvider`; read `appVersion` from `package`/`pubspec` (or hard-string for now).
   3. Build `ExportBundle`, call `toCsv` / `toJsonString`.
   4. Write both to temp files under `getTemporaryDirectory()` (`path_provider`) with the Locked-#9 filenames.
-  5. `await SharePlus.instance.share(ShareParams(files: [XFile(csvPath), XFile(jsonPath)]))`.
+  5. `await ref.read(shareServiceProvider).shareFiles([csvPath, jsonPath])` — a thin Dart wrapper over the `ls/share` `MethodChannel` that presents `UIActivityViewController` natively (shared service, reused by SOW-02b).
   6. Drive a small `ExportState { idle, preparing, error(message) }` for the UI.
   - Heavy CSV/JSON string building can be wrapped in `compute()` if profiling shows jank, but a single user's history is small — await is sufficient; do **not** block `build`.
 
@@ -224,7 +225,7 @@ date,session_id,program,day,exercise,set_number,reps,weight_display,unit,weight_
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| `share_plus` adds a dependency the user wanted to avoid | Med | It's flutter.dev-federated (closest to first-party), single-purpose, widely vetted; the native-bridge alternative is *more* maintained surface. Pin a major version; revisit only if it bloats. |
+| Native share bridge can't be compile-verified here (no Xcode) | Med | The Swift `ShareHandler` is ~30 lines of standard `UIActivityViewController` presentation; verify on device (like the watch SOW). The serializer, DAO, and the channel wrapper are pure Dart and fully unit-tested; only the native present step needs a device check. |
 | iOS share sheet returns no clear "shared" signal, leaving the row stuck busy | Low | Use `share_plus`'s `ShareResult`/completion to clear state; also clear on any return from the await regardless of result. |
 | CSV opened in Excel mangles a leading-`=`/`+` exercise name (formula injection) | Low | Prefix-guard fields starting with `= + - @` in `toCsv` (per CSV-injection hardening); covered by a unit test. |
 | Large history serialized on the UI thread janks Settings | Low (one user's data is small) | Await off the build path; wrap string-building in `compute()` if profiling shows >1 frame. AC requires no jank. |

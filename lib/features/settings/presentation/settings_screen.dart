@@ -12,8 +12,12 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/spec.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
+import '../../../core/util/weight.dart';
 import '../../../main.dart' show databaseProvider;
+import '../../export/application/export_controller.dart';
 import '../../programs/application/programs_provider.dart';
+import '../../workout/application/plate_format.dart';
+import '../../workout/presentation/set_log_sheet.dart' show showBarChooserSheet;
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -91,6 +95,31 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: LsGap.loose),
           _Section(
+            title: 'PLATES',
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _PlateNavRow(
+                  title: 'Default bar',
+                  value: WeightConv.format(s.barWeightKg, unit).toUpperCase(),
+                  onTap: () => showBarChooserSheet(context, ref, unit),
+                ),
+                const SizedBox(height: LsGap.item),
+                _PlateNavRow(
+                  title: 'Available plates',
+                  value: _plateInventorySummary(s.plateInventoryKg, unit),
+                  onTap: () => _pickPlateInventory(
+                    context,
+                    ref,
+                    unit,
+                    s.plateInventoryKg,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: LsGap.loose),
+          _Section(
             title: 'ACCENT COLOR',
             child: _AccentSwatches(
               current: s.accent,
@@ -139,6 +168,15 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ],
+          const SizedBox(height: LsGap.loose),
+          _Section(
+            title: 'DATA',
+            child: _ExportDataRow(
+              state: ref.watch(exportControllerProvider),
+              onTap: () =>
+                  ref.read(exportControllerProvider.notifier).exportAndShare(),
+            ),
+          ),
           if (kDevToolsEnabled) ...[
             const SizedBox(height: LsGap.loose),
             _Section(
@@ -381,6 +419,93 @@ Future<int?> _pickRestSeconds(BuildContext context, int current) {
   );
 }
 
+/// The canonical full plate set (kg), largest-first — the universe of
+/// denominations the "Available plates" sheet offers as toggle chips.
+const List<double> _allPlateDenomsKg = <double>[25, 20, 15, 10, 5, 2.5, 1.25];
+
+/// One-line summary of the selected plate set in the display unit, e.g.
+/// "25 · 20 · 15 · 10 · 5 · 2.5 · 1.25". Falls back to a placeholder when the
+/// user has somehow deselected everything.
+String _plateInventorySummary(List<double> inventoryKg, WeightUnit unit) {
+  if (inventoryKg.isEmpty) return 'NONE SELECTED';
+  final sorted = [...inventoryKg]..sort((a, b) => b.compareTo(a));
+  return sorted.map((kg) => PlateFormat.plateNum(kg, unit)).join(' · ');
+}
+
+/// Toggle-chip sheet for choosing which plate denominations are on hand. Writes
+/// the selected set (kg) via [SettingsNotifier.setPlateInventoryKg]. Chips are
+/// labelled in the display unit; values stored are always kg.
+Future<void> _pickPlateInventory(
+  BuildContext context,
+  WidgetRef ref,
+  WeightUnit unit,
+  List<double> currentKg,
+) {
+  final selected = {...currentKg};
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => LsSheet(
+      child: StatefulBuilder(
+        builder: (ctx, setSheetState) {
+          final t = LsTheme.of(ctx);
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const SizedBox(height: LsGap.sub),
+              const EyebrowLabel('AVAILABLE PLATES'),
+              const SizedBox(height: LsGap.sub),
+              Text(
+                'Pick the plate pairs you own. The set-logger breakdown only '
+                'suggests these.',
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
+              ),
+              const SizedBox(height: LsGap.loose),
+              Wrap(
+                spacing: LsGap.inline,
+                runSpacing: LsGap.inline,
+                children: [
+                  for (final kg in _allPlateDenomsKg)
+                    LsChoiceChip(
+                      label: PlateFormat.plateNum(kg, unit),
+                      selected: selected.contains(kg),
+                      onTap: () => setSheetState(() {
+                        if (selected.contains(kg)) {
+                          // Keep at least one plate — an empty inventory would
+                          // make every weight misleadingly read "BAR ONLY".
+                          if (selected.length > 1) selected.remove(kg);
+                        } else {
+                          selected.add(kg);
+                        }
+                      }),
+                    ),
+                ],
+              ),
+              const SizedBox(height: LsGap.loose),
+              LsButton(
+                label: 'DONE',
+                expand: true,
+                minHeight: LsBox.cta,
+                onPressed: () {
+                  final next = _allPlateDenomsKg
+                      .where(selected.contains)
+                      .toList();
+                  ref
+                      .read(settingsProvider.notifier)
+                      .setPlateInventoryKg(next);
+                  Navigator.pop(ctx);
+                },
+              ),
+            ],
+          );
+        },
+      ),
+    ),
+  );
+}
+
 /// Developer action: wipe every row of user data, then flip the onboarding
 /// flag so the router's refresh listener drops the user back into a fresh
 /// first-run wizard. Confirmed first — it's destructive and irreversible.
@@ -463,6 +588,121 @@ class _ResetDataRow extends StatelessWidget {
                 ),
               ),
               Icon(Icons.delete_outline, color: LsSignals.danger, size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Exports the full workout history (CSV + JSON) to the native share sheet.
+/// Mirrors the nav-row card pattern. While [ExportPreparing] the row is
+/// disabled and swaps its trailing glyph for a spinner; [ExportError] shows the
+/// failure message inline while keeping the row tappable for a retry.
+class _ExportDataRow extends StatelessWidget {
+  const _ExportDataRow({required this.state, required this.onTap});
+  final ExportState state;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    final preparing = state is ExportPreparing;
+    final error = state is ExportError ? state as ExportError : null;
+    final subtitle = preparing
+        ? 'PREPARING…'
+        : error?.message ?? 'ALL HISTORY · CSV + JSON';
+    final subtitleColor =
+        error != null ? LsSignals.danger : t.surface.text2;
+    return Material(
+      color: t.surface.surface,
+      borderRadius: BorderRadius.circular(LsRadius.r3),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        onTap: preparing ? null : onTap,
+        child: Container(
+          padding: LsPad.cardStd,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: t.surface.border),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Export data',
+                      style: LsType.displayM.copyWith(color: t.surface.text),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      subtitle,
+                      style: LsType.monoMeta.copyWith(color: subtitleColor),
+                    ),
+                  ],
+                ),
+              ),
+              if (preparing)
+                const CupertinoActivityIndicator()
+              else
+                Icon(Icons.ios_share, color: t.surface.text3, size: 22),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// A tappable settings row (title + current value + chevron) used by the PLATES
+/// section. Mirrors the REST TIMER row's card pattern.
+class _PlateNavRow extends StatelessWidget {
+  const _PlateNavRow({
+    required this.title,
+    required this.value,
+    required this.onTap,
+  });
+  final String title;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Material(
+      color: t.surface.surface,
+      borderRadius: BorderRadius.circular(LsRadius.r3),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(LsRadius.r3),
+        onTap: onTap,
+        child: Container(
+          padding: LsPad.cardStd,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: t.surface.border),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: LsType.displayM.copyWith(color: t.surface.text),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      value,
+                      style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
             ],
           ),
         ),

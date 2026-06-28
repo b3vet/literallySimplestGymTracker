@@ -16,5 +16,9 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "WatchBridge") {
       WCSessionManager.shared.bootstrap(messenger: registrar.messenger())
     }
+    // SOW-02 — wire the `ls/share` MethodChannel (UIActivityViewController).
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ShareHandler") {
+      ShareHandler.shared.setup(messenger: registrar.messenger())
+    }
   }
 }

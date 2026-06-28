@@ -31,11 +31,17 @@ class SessionDetailData {
     required this.sets,
     required this.exerciseNames,
     required this.dayName,
+    required this.programName,
   });
   final WorkoutSession session;
   final List<WorkoutSet> sets;
   final Map<String, String> exerciseNames;
   final String? dayName;
+
+  /// Program the session belonged to. Null when the day was orphaned (program
+  /// deleted) or no program day was attached. Mirrors the post-workout summary
+  /// so a shared card from history carries the same program eyebrow.
+  final String? programName;
 }
 
 final historyListProvider =
@@ -91,15 +97,21 @@ final sessionDetailProvider =
     if (e != null) names[eid] = e.name;
   }
   String? dayName;
+  String? programName;
   if (session.programDayId != null) {
     final d = await programDao.findDay(session.programDayId!);
     dayName = d?.name;
+    if (d != null) {
+      final p = await programDao.findProgram(d.programId);
+      programName = p?.name;
+    }
   }
   return SessionDetailData(
     session: session,
     sets: sets,
     exerciseNames: names,
     dayName: dayName,
+    programName: programName,
   );
 });
 

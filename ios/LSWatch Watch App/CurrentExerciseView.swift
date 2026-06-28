@@ -115,7 +115,72 @@ struct CurrentExerciseView: View {
             MetaPill(value: WeightConv.label(ex.defaultWeightKg, unit: model.unit), label: "Target")
         }
 
+        plateLine(ex)
+
         setChips(ex)
+    }
+
+    /// A tiny read-only per-side plate breakdown for the current default weight,
+    /// computed OFFLINE from the snapshot's bar + inventory. Passive: numerals in
+    /// accent, eyebrow + glue muted, auto-scaling to the wrist width. Mirrors the
+    /// phone's one-line plate readout on the active-workout card.
+    @ViewBuilder
+    private func plateLine(_ ex: WatchExerciseVM) -> some View {
+        let result = solvePlates(
+            targetKg: ex.defaultWeightKg,
+            barKg: model.barKg,
+            inventoryKg: model.plateInventory
+        )
+        HStack(spacing: 6) {
+            Text(PlateFormat.eyebrow(model.barKg, unit: model.unit))
+                .font(LSType.monoMeta)
+                .tracking(0.8)
+                .foregroundStyle(LSColor.text3)
+                .lineLimit(1)
+                .fixedSize()
+            plateBreakdownText(result)
+                .font(LSType.monoData)
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+
+    /// The per-side breakdown as one auto-scaling Text: numerals in accent, the
+    /// `+` / `≈` glue, the trailing signed delta and the bar-only / empty-bar
+    /// fallbacks in `text2`. Mirrors `PlateFormat.line(..., compact: true)`
+    /// segment-for-segment — including the trailing `(−x)` the phone's PlateLine
+    /// shows for the closest (non-exact) case.
+    private func plateBreakdownText(_ r: PlateResult) -> Text {
+        if r.belowBar {
+            return Text("EMPTY BAR").foregroundStyle(LSColor.text2)
+        }
+        if r.barOnly {
+            return Text("BAR ONLY").foregroundStyle(LSColor.text2)
+        }
+        var out = Text("")
+        if !r.exact {
+            out = out
+                + Text("≈\(PlateFormat.approxTotal(r, unit: model.unit)) ")
+                    .foregroundStyle(LSColor.text2)
+        }
+        for (i, kg) in r.perSide.enumerated() {
+            if i > 0 {
+                out = out + Text("+").foregroundStyle(LSColor.text2)
+            }
+            out = out
+                + Text(PlateFormat.plateNum(kg, unit: model.unit))
+                    .foregroundStyle(accent.accent)
+        }
+        if !r.exact {
+            // Hardcoded `−` to mirror the phone's PlateLine: this nearest-at-or-
+            // below DP is always UNDER target when non-exact, so the trailing
+            // magnitude is a deficit.
+            out = out
+                + Text(" (−\(PlateFormat.deltaNum(r, unit: model.unit)))")
+                    .foregroundStyle(LSColor.text2)
+        }
+        return out
     }
 
     /// Progress strip. done up to loggedCount, the next slot is current, the

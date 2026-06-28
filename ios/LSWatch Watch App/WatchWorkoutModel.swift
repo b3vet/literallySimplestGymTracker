@@ -97,7 +97,25 @@ struct WatchSession: Codable, Equatable {
   var cursorExerciseIdx: Int
   var restEndsAtMs: Int64
   var restDefaultSeconds: Int
+  /// Empty-bar weight in kg (mirrors the phone setting). Optional on the wire so
+  /// a stale App-Group snapshot from a pre-plate-feature phone build still
+  /// decodes; `barKg` falls back to the standard 20 kg bar when absent.
+  var barWeightKg: Double?
+  /// Available plate denominations in kg (mirrors the phone setting). Optional
+  /// for the same back-compat reason; `plateInventory` falls back to the
+  /// canonical gym set when absent.
+  var plateInventoryKg: [Double]?
   var queue: [WatchExerciseVM]
+
+  /// Effective bar weight for plate math — the snapshot value, or the standard
+  /// 20 kg Olympic bar when a stale snapshot omits it.
+  var barKg: Double { barWeightKg ?? 20.0 }
+
+  /// Effective plate inventory for plate math — the snapshot value, or the
+  /// canonical gym set when a stale snapshot omits it.
+  var plateInventory: [Double] {
+    plateInventoryKg ?? [25, 20, 15, 10, 5, 2.5, 1.25]
+  }
 }
 
 /// The kind of change one device tells the other about. Raw values are the exact
@@ -234,6 +252,16 @@ final class WatchWorkoutModel: NSObject, WCSessionDelegate {
   var unit: String { session?.unit ?? "kg" }
   var accentArgb: Int64 { session?.accentArgb ?? 0xFFFF9500 }
   var accentInkArgb: Int64 { session?.accentInkArgb ?? 0xFF000000 }
+
+  /// Empty-bar weight (kg) for the offline plate breakdown — mirrors the phone
+  /// setting; falls back to the standard 20 kg bar when idle / pre-feature.
+  var barKg: Double { session?.barKg ?? 20.0 }
+
+  /// Plate inventory (kg) for the offline plate breakdown — mirrors the phone
+  /// setting; falls back to the canonical gym set when idle / pre-feature.
+  var plateInventory: [Double] {
+    session?.plateInventory ?? [25, 20, 15, 10, 5, 2.5, 1.25]
+  }
 
   // MARK: - Mutation senders (optimistic local apply, then send to phone)
 

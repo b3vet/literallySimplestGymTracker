@@ -4,13 +4,42 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/router/app_router.dart';
 import 'core/settings/settings_provider.dart';
 import 'core/theme/app_theme.dart';
+import 'features/workout/application/rest_timer_controller.dart';
 import 'features/workout/application/watch_sync_controller.dart';
 
-class App extends ConsumerWidget {
+class App extends ConsumerStatefulWidget {
   const App({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<App> createState() => _AppState();
+}
+
+class _AppState extends ConsumerState<App> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // On return-to-foreground, re-validate the rest timer against the wall
+    // clock (SOW-03 decision #5). A long background can suspend the in-memory
+    // expiry timer; this reschedules it and clears a rest that expired while
+    // we were away. Cold relaunch is handled in RestTimerController.build().
+    if (state == AppLifecycleState.resumed) {
+      ref.read(restTimerProvider.notifier).rehydrate();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(appRouterProvider);
     final settings = ref.watch(settingsProvider);
     final accent = lsAccentSpec(settings.accent);

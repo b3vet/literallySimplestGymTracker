@@ -329,6 +329,8 @@ class WatchSessionSnapshot {
     required this.cursorExerciseIdx,
     required this.restEndsAtMs,
     required this.restDefaultSeconds,
+    required this.barWeightKg,
+    required this.plateInventoryKg,
     required this.queue,
   });
 
@@ -360,6 +362,14 @@ class WatchSessionSnapshot {
   /// logged set (mirrors the phone setting).
   int restDefaultSeconds;
 
+  /// Empty-bar weight in kg (mirrors the phone setting), so the watch can
+  /// compute the per-side plate breakdown offline.
+  double barWeightKg;
+
+  /// Available plate denominations in kg (mirrors the phone setting), so the
+  /// watch can solve the per-side plate breakdown offline.
+  List<double> plateInventoryKg;
+
   List<WatchExercise> queue;
 
   List<Object?> _toList() {
@@ -374,6 +384,8 @@ class WatchSessionSnapshot {
       cursorExerciseIdx,
       restEndsAtMs,
       restDefaultSeconds,
+      barWeightKg,
+      plateInventoryKg,
       queue,
     ];
   }
@@ -394,7 +406,9 @@ class WatchSessionSnapshot {
       cursorExerciseIdx: result[7]! as int,
       restEndsAtMs: result[8]! as int,
       restDefaultSeconds: result[9]! as int,
-      queue: (result[10]! as List<Object?>).cast<WatchExercise>(),
+      barWeightKg: result[10]! as double,
+      plateInventoryKg: (result[11]! as List<Object?>).cast<double>(),
+      queue: (result[12]! as List<Object?>).cast<WatchExercise>(),
     );
   }
 
@@ -407,7 +421,7 @@ class WatchSessionSnapshot {
     if (identical(this, other)) {
       return true;
     }
-    return _deepEquals(schemaVersion, other.schemaVersion) && _deepEquals(sessionId, other.sessionId) && _deepEquals(programDayName, other.programDayName) && _deepEquals(startedAtMs, other.startedAtMs) && _deepEquals(unit, other.unit) && _deepEquals(accentArgb, other.accentArgb) && _deepEquals(accentInkArgb, other.accentInkArgb) && _deepEquals(cursorExerciseIdx, other.cursorExerciseIdx) && _deepEquals(restEndsAtMs, other.restEndsAtMs) && _deepEquals(restDefaultSeconds, other.restDefaultSeconds) && _deepEquals(queue, other.queue);
+    return _deepEquals(schemaVersion, other.schemaVersion) && _deepEquals(sessionId, other.sessionId) && _deepEquals(programDayName, other.programDayName) && _deepEquals(startedAtMs, other.startedAtMs) && _deepEquals(unit, other.unit) && _deepEquals(accentArgb, other.accentArgb) && _deepEquals(accentInkArgb, other.accentInkArgb) && _deepEquals(cursorExerciseIdx, other.cursorExerciseIdx) && _deepEquals(restEndsAtMs, other.restEndsAtMs) && _deepEquals(restDefaultSeconds, other.restDefaultSeconds) && _deepEquals(barWeightKg, other.barWeightKg) && _deepEquals(plateInventoryKg, other.plateInventoryKg) && _deepEquals(queue, other.queue);
   }
 
   @override
@@ -416,7 +430,7 @@ class WatchSessionSnapshot {
 
   @override
   String toString() {
-    return 'WatchSessionSnapshot(schemaVersion: $schemaVersion, sessionId: $sessionId, programDayName: $programDayName, startedAtMs: $startedAtMs, unit: $unit, accentArgb: $accentArgb, accentInkArgb: $accentInkArgb, cursorExerciseIdx: $cursorExerciseIdx, restEndsAtMs: $restEndsAtMs, restDefaultSeconds: $restDefaultSeconds, queue: $queue)';
+    return 'WatchSessionSnapshot(schemaVersion: $schemaVersion, sessionId: $sessionId, programDayName: $programDayName, startedAtMs: $startedAtMs, unit: $unit, accentArgb: $accentArgb, accentInkArgb: $accentInkArgb, cursorExerciseIdx: $cursorExerciseIdx, restEndsAtMs: $restEndsAtMs, restDefaultSeconds: $restDefaultSeconds, barWeightKg: $barWeightKg, plateInventoryKg: $plateInventoryKg, queue: $queue)';
   }
 }
 

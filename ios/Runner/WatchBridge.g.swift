@@ -401,6 +401,12 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
   /// Default rest length in seconds, so the watch can auto-start rest after a
   /// logged set (mirrors the phone setting).
   var restDefaultSeconds: Int64
+  /// Empty-bar weight in kg (mirrors the phone setting), so the watch can
+  /// compute the per-side plate breakdown offline.
+  var barWeightKg: Double
+  /// Available plate denominations in kg (mirrors the phone setting), so the
+  /// watch can solve the per-side plate breakdown offline.
+  var plateInventoryKg: [Double]
   var queue: [WatchExercise]
 
 
@@ -416,7 +422,9 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
     let cursorExerciseIdx = pigeonVar_list[7] as! Int64
     let restEndsAtMs = pigeonVar_list[8] as! Int64
     let restDefaultSeconds = pigeonVar_list[9] as! Int64
-    let queue = pigeonVar_list[10] as! [WatchExercise]
+    let barWeightKg = pigeonVar_list[10] as! Double
+    let plateInventoryKg = pigeonVar_list[11] as! [Double]
+    let queue = pigeonVar_list[12] as! [WatchExercise]
 
     return WatchSessionSnapshot(
       schemaVersion: schemaVersion,
@@ -429,6 +437,8 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
       cursorExerciseIdx: cursorExerciseIdx,
       restEndsAtMs: restEndsAtMs,
       restDefaultSeconds: restDefaultSeconds,
+      barWeightKg: barWeightKg,
+      plateInventoryKg: plateInventoryKg,
       queue: queue
     )
   }
@@ -444,6 +454,8 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
       cursorExerciseIdx,
       restEndsAtMs,
       restDefaultSeconds,
+      barWeightKg,
+      plateInventoryKg,
       queue,
     ]
   }
@@ -451,7 +463,7 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
     if Swift.type(of: lhs) != Swift.type(of: rhs) {
       return false
     }
-    return WatchBridgePigeonInternal.deepEquals(lhs.schemaVersion, rhs.schemaVersion) && WatchBridgePigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && WatchBridgePigeonInternal.deepEquals(lhs.programDayName, rhs.programDayName) && WatchBridgePigeonInternal.deepEquals(lhs.startedAtMs, rhs.startedAtMs) && WatchBridgePigeonInternal.deepEquals(lhs.unit, rhs.unit) && WatchBridgePigeonInternal.deepEquals(lhs.accentArgb, rhs.accentArgb) && WatchBridgePigeonInternal.deepEquals(lhs.accentInkArgb, rhs.accentInkArgb) && WatchBridgePigeonInternal.deepEquals(lhs.cursorExerciseIdx, rhs.cursorExerciseIdx) && WatchBridgePigeonInternal.deepEquals(lhs.restEndsAtMs, rhs.restEndsAtMs) && WatchBridgePigeonInternal.deepEquals(lhs.restDefaultSeconds, rhs.restDefaultSeconds) && WatchBridgePigeonInternal.deepEquals(lhs.queue, rhs.queue)
+    return WatchBridgePigeonInternal.deepEquals(lhs.schemaVersion, rhs.schemaVersion) && WatchBridgePigeonInternal.deepEquals(lhs.sessionId, rhs.sessionId) && WatchBridgePigeonInternal.deepEquals(lhs.programDayName, rhs.programDayName) && WatchBridgePigeonInternal.deepEquals(lhs.startedAtMs, rhs.startedAtMs) && WatchBridgePigeonInternal.deepEquals(lhs.unit, rhs.unit) && WatchBridgePigeonInternal.deepEquals(lhs.accentArgb, rhs.accentArgb) && WatchBridgePigeonInternal.deepEquals(lhs.accentInkArgb, rhs.accentInkArgb) && WatchBridgePigeonInternal.deepEquals(lhs.cursorExerciseIdx, rhs.cursorExerciseIdx) && WatchBridgePigeonInternal.deepEquals(lhs.restEndsAtMs, rhs.restEndsAtMs) && WatchBridgePigeonInternal.deepEquals(lhs.restDefaultSeconds, rhs.restDefaultSeconds) && WatchBridgePigeonInternal.deepEquals(lhs.barWeightKg, rhs.barWeightKg) && WatchBridgePigeonInternal.deepEquals(lhs.plateInventoryKg, rhs.plateInventoryKg) && WatchBridgePigeonInternal.deepEquals(lhs.queue, rhs.queue)
   }
 
   func hash(into hasher: inout Hasher) {
@@ -466,11 +478,13 @@ struct WatchSessionSnapshot: Hashable, CustomStringConvertible {
     WatchBridgePigeonInternal.deepHash(value: cursorExerciseIdx, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: restEndsAtMs, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: restDefaultSeconds, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: barWeightKg, hasher: &hasher)
+    WatchBridgePigeonInternal.deepHash(value: plateInventoryKg, hasher: &hasher)
     WatchBridgePigeonInternal.deepHash(value: queue, hasher: &hasher)
   }
 
   public var description: String {
-    return "WatchSessionSnapshot(schemaVersion: \(String(describing: schemaVersion)), sessionId: \(String(describing: sessionId)), programDayName: \(String(describing: programDayName)), startedAtMs: \(String(describing: startedAtMs)), unit: \(String(describing: unit)), accentArgb: \(String(describing: accentArgb)), accentInkArgb: \(String(describing: accentInkArgb)), cursorExerciseIdx: \(String(describing: cursorExerciseIdx)), restEndsAtMs: \(String(describing: restEndsAtMs)), restDefaultSeconds: \(String(describing: restDefaultSeconds)), queue: \(String(describing: queue)))"
+    return "WatchSessionSnapshot(schemaVersion: \(String(describing: schemaVersion)), sessionId: \(String(describing: sessionId)), programDayName: \(String(describing: programDayName)), startedAtMs: \(String(describing: startedAtMs)), unit: \(String(describing: unit)), accentArgb: \(String(describing: accentArgb)), accentInkArgb: \(String(describing: accentInkArgb)), cursorExerciseIdx: \(String(describing: cursorExerciseIdx)), restEndsAtMs: \(String(describing: restEndsAtMs)), restDefaultSeconds: \(String(describing: restDefaultSeconds)), barWeightKg: \(String(describing: barWeightKg)), plateInventoryKg: \(String(describing: plateInventoryKg)), queue: \(String(describing: queue)))"
   }
 }
 

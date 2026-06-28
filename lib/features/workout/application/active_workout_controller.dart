@@ -74,6 +74,17 @@ final workoutDaoProvider = Provider<WorkoutDao>((ref) {
   return WorkoutDao(ref.watch(databaseProvider));
 });
 
+/// The single most-recent set ever logged for [exerciseId] (across all
+/// sessions), or null when the exercise has no history. Feeds the active-
+/// workout footer's 1-tap "repeat last set" chip (SOW-03). The in-session last
+/// set, when one exists, takes precedence at the call site — so this is only
+/// consulted before the first set of the exercise is logged this session,
+/// which is why a stale cached value after logging is harmless.
+final lastSetForExerciseProvider =
+    FutureProvider.family<WorkoutSet?, String>((ref, exerciseId) {
+  return ref.watch(workoutDaoProvider).lastSetForExercise(exerciseId);
+});
+
 final prDetectorProvider = Provider((ref) {
   return PrDetector(ref.watch(workoutDaoProvider));
 });
@@ -820,6 +831,12 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   Future<String?> finish() async {
     final current = state.value;
     if (current == null) return null;
+    // Clear any running rest first so it can't outlive the session — in memory
+    // AND on disk (SOW-03 §5: rest is cleared on finish/abandon, else a stored
+    // endsAt would resurrect on relaunch or leak into the next workout).
+    // Putting this in the controller covers the watch finish/discard paths too,
+    // which route through here.
+    ref.read(restTimerProvider.notifier).dismiss();
     await _workoutDao.completeSession(current.sessionId);
     state = const AsyncValue.data(null);
     await _liveActivity.end();
@@ -829,6 +846,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   Future<void> abandon() async {
     final current = state.value;
     if (current == null) return;
+    ref.read(restTimerProvider.notifier).dismiss(); // see finish() — SOW-03 §5
     await _workoutDao.abandonSession(current.sessionId);
     state = const AsyncValue.data(null);
     await _liveActivity.end();

@@ -127,7 +127,9 @@ This is the testable claim. `endsAt` is the absolute epoch time the rest ends; t
 | **Rest expires while killed** | App shows *no* stale rest on relaunch | `build()` sees a past `endsAt` → clears the pref (decision #6) | 🔧 New |
 | **Watch + phone both showing rest** | Both show the same countdown; adjusting on one updates the other | Existing last-writer-wins `applyRemoteRest` (`rest_timer_controller.dart:70-81`) + the snapshot push; the pref write is added to that path | 🔧 Harden: persist on the remote-apply path too |
 
-The honest boundary, stated plainly so we don't over-claim: **a force-kill that happens while rest is running is recovered on next launch, but the Live Activity itself ends when iOS terminates the app** (an OS guarantee we can't override without push). So the precise claim is *"reopen the app and your rest is exactly where it should be — to the second."* not *"the lock-screen widget survives a force-kill."* The watch rest pill, driven independently, also re-derives from `endsAt` on its next snapshot.
+The honest boundary, stated plainly so we don't over-claim: **a force-kill that happens while rest is running is recovered on next launch, but the Live Activity itself ends when iOS terminates the app** (an OS guarantee we can't override without push). So the precise claim is *"reopen the app, resume your workout, and your rest is exactly where it should be — to the second."* not *"the lock-screen widget survives a force-kill."* The watch rest pill, driven independently, also re-derives from `endsAt` on its next snapshot.
+
+**Banner host on cold launch (decided, no new UI per §4c):** the in-app rest banner lives on the active-workout screen only. On a cold relaunch the app lands on Home, which already resumes the in-progress session and shows a **RESUME WORKOUT** CTA. The rest *state* is restored the instant the app launches (and is cleared if expired), but the *banner* reappears once the user taps RESUME and re-enters the active-workout screen — at which point it reads the correct, to-the-second remaining time. We deliberately did **not** add an auto-resume route or a globally-rendered banner (both are new UI surface that §4c rules out); the §8 matrix below reflects the one RESUME tap.
 
 ## 6. Implementation plan
 
@@ -154,10 +156,11 @@ Ordered by layer. Files named are the ones that exist today.
 - [ ] Opening the wheel sheet for an exercise with history shows the **reps and RIR of the last set** already selected (not target-mid / 0).
 - [ ] The full routine-set-via-sheet path is **≤3 taps and completes in ≤3 s** by stopwatch on a real device.
 - [ ] The `⟳` button is hidden when there is no prior set for the current exercise, and for drop-set exercises.
-- [ ] Force-killing the app mid-rest and relaunching restores the rest banner with the **correct remaining time** (within 1 s) on the phone.
-- [ ] If the rest had already expired during the kill, **no rest banner appears** on relaunch (no stale `0:00`).
+- [ ] Force-killing the app mid-rest, relaunching, and tapping **RESUME WORKOUT** restores the rest banner with the **correct remaining time** (within 1 s) on the phone. (Rest *state* restores at launch; the banner reappears on re-entering the active-workout screen — see §5.)
+- [ ] If the rest had already expired during the kill, **no rest banner appears** after resuming (no stale `0:00`).
 - [ ] Backgrounding, locking, and app-switching during rest all keep the Live Activity / Dynamic Island countdown ticking (verified on hardware).
 - [ ] Adjusting rest on the watch updates the phone (and vice-versa), and the adjusted value survives a force-kill + relaunch.
+- [ ] **Finishing or discarding** a workout while rest is running clears the rest immediately — in memory **and** on disk — so it can't resurrect on the next launch or leak into the next workout. (Enforced at the controller layer, covering the phone and watch finish/discard paths; unit-tested.)
 - [ ] The watch crown logger prefills reps + RIR from the last set, matching the phone.
 - [ ] No new third-party dependency added; `pubspec.yaml` diff is empty for runtime deps.
 
@@ -181,10 +184,11 @@ Ordered by layer. Files named are the ones that exist today.
 | M2 | Log a set → lock phone → observe lock screen | Countdown ticks on the lock screen |
 | M3 | Log a set → open another app → check Dynamic Island | Compact/expanded countdown ticks |
 | M4 | Log a set → background app 6 min → reopen | In-app banner shows correct remaining (or cleared if expired) |
-| M5 | Log a set → **force-kill** → relaunch (rest still active) | Rest banner restores within 1 s of the true remaining time |
-| M6 | Log a set with 10 s rest → **force-kill** → relaunch after 15 s | No rest banner (cleared, no stale `0:00`) |
+| M5 | Log a set → **force-kill** → relaunch → tap **RESUME WORKOUT** | Rest banner restores within 1 s of the true remaining time |
+| M6 | Log a set with 10 s rest → **force-kill** → relaunch after 15 s → tap **RESUME WORKOUT** | No rest banner (cleared, no stale `0:00`) |
+| M6b | Log a set → **discard workout** → relaunch | No rest survives a discarded workout (state + pref cleared); new workout starts with no leftover rest |
 | M7 | Start rest on phone → adjust −15 s on watch → check phone | Phone reflects the adjusted end time |
-| M8 | Start rest → adjust on watch → **force-kill phone** → relaunch | Restored rest reflects the watch-adjusted time |
+| M8 | Start rest → adjust on watch → **force-kill phone** → relaunch → tap **RESUME WORKOUT** | Restored rest reflects the watch-adjusted time |
 | M9 | Stopwatch: log a routine set via the sheet | ≤3 s, ≤3 taps |
 | M10 | Stopwatch: tap `⟳` repeat-last-set | 1 tap, rest starts, set logged correctly |
 | M11 | Crown log on watch with chalked/gloved hand | Completes without mis-taps; time ≈ phone |
@@ -204,5 +208,5 @@ Ordered by layer. Files named are the ones that exist today.
 
 - The §7 acceptance criteria pass, including the full §8 manual matrix on a real iPhone + paired Apple Watch.
 - The tap budget in §4a is met and documented, so the App Store claim "log a set in one tap — the fastest logging anywhere" is backed by M9/M10.
-- The persistence guarantee matrix (§5) is true on hardware, unlocking the testable trust claim *"reopen the app and your rest timer is exactly where it should be — even after a force-quit"* — a claim no rival advertises.
+- The persistence guarantee matrix (§5) is true on hardware, unlocking the testable trust claim *"reopen the app, pick up your workout, and your rest timer is exactly where it should be — even after a force-quit"* — a claim no rival advertises.
 - Update [02-roadmap.md](../02-roadmap.md): flip **SOW-03** to `✅ Shipped` and note that the logging-speed + rest-reliability Phase 0 gate is cleared.

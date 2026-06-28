@@ -16,10 +16,12 @@ import '../application/active_workout_controller.dart';
 import '../application/rest_timer_controller.dart';
 import '../application/watch_sync_controller.dart';
 import '../domain/active_session.dart';
+import '../domain/plate_math.dart';
 import '../domain/workout_set.dart';
 import '../../history/application/history_provider.dart';
 import '../../home/application/home_provider.dart';
 import '../../stats/application/stats_provider.dart';
+import 'plate_line.dart';
 import 'program_status_sheet.dart';
 import 'rest_timer_banner.dart';
 import 'set_log_sheet.dart';
@@ -134,6 +136,15 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     WeightUnit unit,
   ) {
     final t = LsTheme.of(context);
+    final settings = ref.watch(settingsProvider);
+    // Read-only plate breakdown for this exercise's default/last weight. The
+    // default weight is already kg, so it feeds solvePlates directly. Recomputed
+    // whenever build runs (i.e. when the current exercise / settings change).
+    final platePreview = solvePlates(
+      targetKg: current.defaultWeightKg,
+      barKg: settings.barWeightKg,
+      inventoryKg: settings.plateInventoryKg,
+    );
     final setsLoggedForCurrent = session.loggedSets
         .where((s) => s.exerciseId == current.exerciseId)
         .toList();
@@ -147,6 +158,47 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
         : const <List<WorkoutSet>>[];
     final canPrev = session.cursor.exerciseIdx > 0;
     final canNext = session.cursor.exerciseIdx < session.queue.length - 1;
+
+    // 1-tap "repeat last set" target (SOW-03 #2): prefer the most recent set
+    // logged this session; else fall back to this exercise's all-time last set
+    // so you can repeat last week's working set before logging anything today.
+    // Hidden for drop sets (they keep their guided chain) and once all target
+    // sets are hit (the CTA has become "NEXT EXERCISE →").
+    final inSessionLast =
+        setsLoggedForCurrent.isNotEmpty ? setsLoggedForCurrent.last : null;
+    final repeatTarget = inSessionLast ??
+        ref.watch(lastSetForExerciseProvider(current.exerciseId)).value;
+    final showRepeat =
+        !allTargetsHit && !current.isDropSet && repeatTarget != null;
+
+    final logCta = LsButton(
+      label: allTargetsHit
+          ? 'NEXT EXERCISE →'
+          : (current.isDropSet ? 'LOG DROP SET' : 'LOG SET'),
+      onPressed: allTargetsHit
+          ? () => ref.read(activeSessionProvider.notifier).goNext()
+          : (current.isDropSet
+              ? () => _logDropSet(current, completedForCurrent + 1)
+              : () => _openSetLogSheet(current, setsLoggedForCurrent.length)),
+      expand: true,
+      minHeight: LsBox.cta,
+    );
+    final Widget footerCta;
+    if (showRepeat) {
+      final target = repeatTarget;
+      footerCta = Row(
+        children: [
+          _RepeatLastSetChip(
+            label: '${_formatWeightNumber(target.weightKg, unit)}×${target.reps}',
+            onTap: () => _repeatLastSet(target),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: logCta),
+        ],
+      );
+    } else {
+      footerCta = logCta;
+    }
 
     // Layout: the LOG SET CTA + sub-footer stay pinned at the bottom (they're
     // action controls, not content). Everything above scrolls as one block in
@@ -248,6 +300,14 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                       ),
                     ],
                   ),
+                  // Read-only per-side plate breakdown for the default weight.
+                  // Sits inside the meta block (tight gap above) — not a card.
+                  const SizedBox(height: LsGap.sub),
+                  PlateLine(
+                    result: platePreview,
+                    unit: unit,
+                    onBarTap: null,
+                  ),
                   const SizedBox(height: LsGap.loose),
                   // When the slot has been substituted AND the user already
                   // logged sets under the previous exercise, surface that
@@ -325,19 +385,7 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
             ),
           ),
           const SizedBox(height: LsGap.sub),
-          LsButton(
-            label: allTargetsHit
-                ? 'NEXT EXERCISE →'
-                : (current.isDropSet ? 'LOG DROP SET' : 'LOG SET'),
-            onPressed: allTargetsHit
-                ? () => ref.read(activeSessionProvider.notifier).goNext()
-                : (current.isDropSet
-                    ? () => _logDropSet(current, completedForCurrent + 1)
-                    : () =>
-                        _openSetLogSheet(current, setsLoggedForCurrent.length)),
-            expand: true,
-            minHeight: LsBox.cta,
-          ),
+          footerCta,
           const SizedBox(height: 12),
           LsSubFooter(
             items: [
@@ -432,27 +480,42 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     PlannedExercise current,
     int setsAlreadyLogged,
   ) async {
-    final lastWeight = await ref
+    final last = await ref
         .read(workoutDaoProvider)
         .lastSetForExercise(current.exerciseId);
     if (!mounted) return;
+    // Prefill the wheels from the last set of this exercise — reps + RIR, not
+    // just weight (SOW-03 decision #3) — so the common "same as last time" log
+    // is zero-scroll. The sheet falls back to target-mid / 0 when last is null.
     final result = await showSetLogSheet(
       context,
       exercise: current,
       setNumber: setsAlreadyLogged + 1,
-      initialReps: null,
-      initialWeightKg: lastWeight?.weightKg ?? current.defaultWeightKg,
-      initialRir: 0,
+      initialReps: last?.reps,
+      initialWeightKg: last?.weightKg ?? current.defaultWeightKg,
+      initialRir: last?.rir ?? 0,
     );
     if (result == null) return;
+    await _commitSet(result.reps, result.weightKg, result.rir);
+  }
+
+  /// Log a set and kick off the rest timer — the shared tail of every logging
+  /// path (the wheel sheet AND the 1-tap repeat chip) so both behave
+  /// identically downstream (SOW-03).
+  Future<void> _commitSet(int reps, double weightKg, int rir) async {
     await ref
         .read(activeSessionProvider.notifier)
-        .logSet(reps: result.reps, weightKg: result.weightKg, rir: result.rir);
+        .logSet(reps: reps, weightKg: weightKg, rir: rir);
     final restSeconds = ref.read(settingsProvider).restSeconds;
     if (restSeconds > 0) {
       ref.read(restTimerProvider.notifier).start(restSeconds);
     }
   }
+
+  /// 1-tap repeat: log [last] verbatim (reps × weight × RIR) and start rest —
+  /// no sheet, no wheel scroll. The highest-leverage speed win (SOW-03 #2).
+  Future<void> _repeatLastSet(WorkoutSet last) =>
+      _commitSet(last.reps, last.weightKg, last.rir);
 
   Future<void> _editSet(
     PlannedExercise current,
@@ -1110,6 +1173,51 @@ class _NoActiveWorkoutScaffold extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               LsButton(label: 'HOME', onPressed: () => context.go('/')),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact secondary CTA beside LOG SET: a 1-tap "repeat last set" affordance
+/// (SOW-03 #2). Shows `⟳ {weight}×{reps}` so the user sees what they're
+/// repeating before tapping. Sized to the CTA height so it aligns with the
+/// primary button; styled with the accent border / dim fill of the chip family.
+class _RepeatLastSetChip extends StatelessWidget {
+  const _RepeatLastSetChip({required this.label, required this.onTap});
+
+  final String label; // e.g. "80×8"
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Semantics(
+      button: true,
+      label: 'Repeat last set, $label',
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: onTap,
+        child: Container(
+          height: LsBox.cta,
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: t.accent.accentDim,
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            border: Border.all(color: t.accent.accent),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.refresh, size: 18, color: t.accent.accent),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: LsType.monoData.copyWith(color: t.accent.accent),
+              ),
             ],
           ),
         ),

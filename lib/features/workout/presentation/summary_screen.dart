@@ -12,6 +12,8 @@ import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../../programs/application/programs_provider.dart';
 import '../../programs/domain/program_exercise.dart';
+import '../../share/domain/workout_summary.dart';
+import '../../share/presentation/share_summary_button.dart';
 import '../application/active_workout_controller.dart';
 import '../application/pr_detector.dart';
 import '../data/workout_dao.dart';
@@ -148,15 +150,35 @@ class SummaryScreen extends ConsumerWidget {
           orElse: () => const <TonnagePoint>[],
         );
 
+        // A headless snapshot of THIS session for outbound share (text + card).
+        // Built from the data already loaded above — no extra DB reads. PRs may
+        // still be resolving; an empty map just means "no PR markers yet".
+        final summary = WorkoutSummary.fromSession(
+          date: d.session.startedAt,
+          duration: d.session.duration,
+          sets: d.sets,
+          exerciseNames: d.exerciseNames,
+          prs: prs.value ?? const {},
+          programName: d.programName,
+          dayName: d.dayName,
+        );
+
         return LsScreen(
           topGap: LsGap.loose,
           topbar: LsTopbar(
             title: headerTitle,
             showBack: false,
-            trailing: LsIconSquare(
-              icon: Icons.check,
-              onTap: () => context.go('/'),
-              semanticLabel: 'Done',
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ShareSummaryButton(summary: summary, unit: unit),
+                const SizedBox(width: 10),
+                LsIconSquare(
+                  icon: Icons.check,
+                  onTap: () => context.go('/'),
+                  semanticLabel: 'Done',
+                ),
+              ],
             ),
           ),
           child: ListView(
