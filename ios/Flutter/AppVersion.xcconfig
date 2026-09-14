@@ -1,0 +1,16 @@
+// Version-only Flutter settings for the bundles that ship INSIDE Runner.app
+// (the Watch app and the Live Activity extension).
+//
+// App Store Connect rejects a build whose embedded bundles disagree with the
+// container app's CFBundleShortVersionString / CFBundleVersion (ITMS-90473),
+// and the failure happens during processing — the upload itself reports
+// success. Those targets used to carry hand-maintained MARKETING_VERSION /
+// CURRENT_PROJECT_VERSION, which silently drifted to 1.2.0 (8) and 1.0.0 (3)
+// while the app moved to 1.4.0 (11).
+//
+// They cannot use Flutter's Debug/Release.xcconfig: those also `#include` the
+// Pods-Runner xcconfig, which would push Runner's pod linker flags into a
+// watchOS target. This file pulls in ONLY the generated Flutter variables, so
+// both targets can read FLUTTER_BUILD_NAME / FLUTTER_BUILD_NUMBER and track
+// pubspec.yaml automatically.
+#include "Generated.xcconfig"

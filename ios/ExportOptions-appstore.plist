@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  App Store / TestFlight export options, passed to `flutter build ipa`:
+
+    flutter build ipa --release [--flavor <f> -t lib/main_<f>.dart] \
+      --export-options-plist=ios/ExportOptions-appstore.plist
+
+  Without this, the archive export falls back to Xcode's interactive defaults
+  and the build number can be rewritten out from under the --build-number we
+  pass. Committed because it is build configuration, not a secret — it holds
+  only the public Team ID.
+
+  Requires the Apple ID that owns team U2WFNLXV3S to be signed in under
+  Xcode > Settings > Accounts, so automatic signing can mint/download the
+  distribution provisioning profile at export time.
+-->
+<plist version="1.0">
+<dict>
+	<!-- Xcode 15.3+ name for what used to be `app-store`. -->
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>U2WFNLXV3S</string>
+	<!-- Xcode mints the distribution profile itself; no profile is pinned here,
+	     so a new bundle id needs no change to this file. -->
+	<key>signingStyle</key>
+	<string>automatic</string>
+	<!-- Ship dSYMs so TestFlight crash reports symbolicate. -->
+	<key>uploadSymbols</key>
+	<true/>
+	<key>stripSwiftSymbols</key>
+	<true/>
+	<!-- Write the .ipa to disk (we upload with Transporter) rather than
+	     uploading straight from xcodebuild. -->
+	<key>destination</key>
+	<string>export</string>
+	<!-- Keep the version + build number we passed on the command line. When
+	     true (the Xcode default for this method) Xcode picks its own, which
+	     silently defeats --build-name / --build-number. -->
+	<key>manageAppVersionAndBuildNumber</key>
+	<false/>
+</dict>
+</plist>
