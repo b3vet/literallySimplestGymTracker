@@ -168,6 +168,13 @@ const lsLight = LsSurface(
 class LsSignals {
   static const danger = Color(0xFFFF5547);
   static const pr = Color(0xFFFFB400);
+
+  /// Dimmed PR tint used as a *background* (the summary screen's PR strip).
+  /// Same problem/solution shape as `accentDimSolidLight`: an alpha wash of
+  /// gold reads fine on the dark surface but washes out to near-white on the
+  /// light one, so light mode gets an opaque tint instead.
+  static final prDimDark = pr.withValues(alpha: 0.12);
+  static const prDimLight = Color(0xFFFFF1CC);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,6 +364,10 @@ class LsTheme extends InheritedWidget {
   /// values and chip labels, so we swap to the opaque variant.
   Color get accentDimBg =>
       isLight ? accent.accentDimSolidLight : accent.accentDim;
+
+  /// Background tint for PR surfaces. See [LsSignals.prDimLight] for why the
+  /// light variant is opaque rather than an alpha wash.
+  Color get prDimBg => isLight ? LsSignals.prDimLight : LsSignals.prDimDark;
 
   @override
   bool updateShouldNotify(LsTheme old) =>

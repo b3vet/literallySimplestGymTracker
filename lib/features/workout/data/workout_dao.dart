@@ -176,6 +176,18 @@ class WorkoutDao {
 
   // ---------- History ----------
 
+  /// How many sessions the user has ever completed, this one included.
+  /// The summary screen uses it to tell a first-ever workout apart from a real
+  /// PR day: with no history to beat, [PrDetector] marks every lift a weight
+  /// PR, and "6 PERSONAL RECORDS" on day one devalues the badge forever after.
+  Future<int> completedSessionCount() async {
+    return Sqflite.firstIntValue(await _db.rawQuery(
+          'SELECT COUNT(*) FROM workout_sessions WHERE status = ?',
+          [SessionStatus.completed.name],
+        )) ??
+        0;
+  }
+
   Future<List<WorkoutSession>> listCompletedSessions({int limit = 100}) async {
     final rows = await _db.query(
       'workout_sessions',
