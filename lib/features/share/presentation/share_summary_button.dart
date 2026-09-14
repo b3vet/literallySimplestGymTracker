@@ -5,6 +5,7 @@ import '../../../core/settings/settings_repository.dart' show WeightUnit;
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/spec.dart';
 import '../../../core/widgets/brand.dart';
+import '../../../core/widgets/layout.dart';
 import '../../export/application/share_service.dart';
 import '../application/summary_card_renderer.dart';
 import '../application/summary_text.dart';
@@ -20,16 +21,29 @@ import 'summary_card.dart';
 /// snackbar on a hard failure. Reused by the post-workout summary screen and by
 /// a completed session opened from history — both build a [WorkoutSummary] (via
 /// [WorkoutSummary.fromSession]) and hand it here.
+/// How the share affordance renders. The action is identical; only the shape
+/// differs, so both entry points stay in sync by construction.
+enum ShareButtonStyle {
+  /// 44pt topbar glyph.
+  icon,
+
+  /// Full-width ghost button — used at the foot of the summary screen, where
+  /// share intent is highest (right after reading your PRs).
+  wide,
+}
+
 class ShareSummaryButton extends ConsumerStatefulWidget {
   const ShareSummaryButton({
     super.key,
     required this.summary,
     required this.unit,
+    this.style = ShareButtonStyle.icon,
   });
 
   /// Headless snapshot of the session to share (text + branded card).
   final WorkoutSummary summary;
   final WeightUnit unit;
+  final ShareButtonStyle style;
 
   @override
   ConsumerState<ShareSummaryButton> createState() => _ShareSummaryButtonState();
@@ -40,6 +54,15 @@ class _ShareSummaryButtonState extends ConsumerState<ShareSummaryButton> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.style == ShareButtonStyle.wide) {
+      return LsButton(
+        label: _busy ? 'PREPARING…' : 'SHARE THIS WORKOUT',
+        icon: Icons.ios_share,
+        variant: LsButtonVariant.secondary,
+        expand: true,
+        onPressed: _busy ? null : _share,
+      );
+    }
     if (_busy) {
       final t = LsTheme.of(context);
       return SizedBox(
