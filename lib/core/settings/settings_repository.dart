@@ -26,8 +26,6 @@ class AppSettings {
     required this.themeMode,
     required this.accent,
     required this.onboardingComplete,
-    this.barWeightKg = 20.0,
-    this.plateInventoryKg = const <double>[25, 20, 15, 10, 5, 2.5, 1.25],
   });
   final WeightUnit? unit; // null = not yet chosen
   final double weightStep;
@@ -36,13 +34,7 @@ class AppSettings {
   final ThemeMode themeMode;
   final LsAccent accent;
 
-  /// The bar weight (in kilograms) used by the plate-math readout. Always
-  /// stored in kg regardless of the display unit.
-  final double barWeightKg;
 
-  /// The pairs of plates available, largest-first, in kilograms. Always stored
-  /// in kg regardless of the display unit.
-  final List<double> plateInventoryKg;
 
   /// Whether the first-run onboarding wizard has been completed. Gates the
   /// app's initial route (see `app_router.dart`). Set `true` at the moment the
@@ -58,8 +50,6 @@ class AppSettings {
     ThemeMode? themeMode,
     LsAccent? accent,
     bool? onboardingComplete,
-    double? barWeightKg,
-    List<double>? plateInventoryKg,
   }) =>
       AppSettings(
         unit: unit ?? this.unit,
@@ -69,8 +59,6 @@ class AppSettings {
         themeMode: themeMode ?? this.themeMode,
         accent: accent ?? this.accent,
         onboardingComplete: onboardingComplete ?? this.onboardingComplete,
-        barWeightKg: barWeightKg ?? this.barWeightKg,
-        plateInventoryKg: plateInventoryKg ?? this.plateInventoryKg,
       );
 }
 
@@ -85,26 +73,28 @@ class SettingsRepository {
   static const _kThemeMode = 'settings.theme_mode';
   static const _kAccent = 'settings.accent';
   static const _kOnboardingComplete = 'settings.onboarding_complete';
-  static const _kBarWeight = 'settings.bar_weight_kg';
-  static const _kPlateInv = 'settings.plate_inventory_kg';
+  /// Removed in 1.4.1 with the plate calculator. Kept only so [read] can purge
+  /// the stored values — leaving them behind would strand a few bytes per user
+  /// forever and confuse anyone reading the prefs later.
+  static const _kLegacyBarWeight = 'settings.bar_weight_kg';
+  static const _kLegacyPlateInv = 'settings.plate_inventory_kg';
 
   /// Session-scoped, NOT a user setting — deliberately has no `settings.`
   /// prefix and is never read into [AppSettings]. Holds the absolute epoch-ms
   /// end time of the in-progress rest so it survives a force-kill (SOW-03).
   static const _kActiveRestEndsAtMs = 'active_rest_ends_at_ms';
   static const int defaultRestSeconds = 90;
-  static const double defaultBarWeightKg = 20.0;
-  static const List<double> defaultPlateInventoryKg = <double>[
-    25,
-    20,
-    15,
-    10,
-    5,
-    2.5,
-    1.25,
-  ];
+
+  /// Erase settings that no longer exist. Fire-and-forget: `read()` is
+  /// synchronous and callers don't await this, and a failed purge is harmless
+  /// because nothing reads these keys any more.
+  void _purgeRemovedSettings() {
+    if (_prefs.containsKey(_kLegacyBarWeight)) _prefs.remove(_kLegacyBarWeight);
+    if (_prefs.containsKey(_kLegacyPlateInv)) _prefs.remove(_kLegacyPlateInv);
+  }
 
   AppSettings read() {
+    _purgeRemovedSettings();
     final unitStr = _prefs.getString(_kUnit);
     final unit = switch (unitStr) {
       'kg' => WeightUnit.kg,
@@ -130,10 +120,6 @@ class SettingsRepository {
     // absent. New installs (no unit, no flag) correctly read as incomplete.
     final onboardingComplete =
         _prefs.getBool(_kOnboardingComplete) ?? (unit != null);
-    final barWeightKg = _prefs.getDouble(_kBarWeight) ?? defaultBarWeightKg;
-    final plateInventoryKg =
-        _prefs.getStringList(_kPlateInv)?.map(double.parse).toList() ??
-            defaultPlateInventoryKg;
     return AppSettings(
       unit: unit,
       weightStep: step,
@@ -142,8 +128,6 @@ class SettingsRepository {
       themeMode: mode,
       accent: accent,
       onboardingComplete: onboardingComplete,
-      barWeightKg: barWeightKg,
-      plateInventoryKg: plateInventoryKg,
     );
   }
 
@@ -180,16 +164,7 @@ class SettingsRepository {
     await _prefs.setBool(_kOnboardingComplete, complete);
   }
 
-  Future<void> writeBarWeightKg(double kg) async {
-    await _prefs.setDouble(_kBarWeight, kg);
-  }
 
-  Future<void> writePlateInventoryKg(List<double> kg) async {
-    await _prefs.setStringList(
-      _kPlateInv,
-      kg.map((p) => p.toString()).toList(),
-    );
-  }
 
   /// The persisted active-rest end time in epoch ms, or `0` if none. The caller
   /// validates against `now`: a value in the past means the rest expired while

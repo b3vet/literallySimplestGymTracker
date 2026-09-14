@@ -52,6 +52,18 @@ class WorkoutDao {
     );
   }
 
+  /// Permanently delete a completed session. `workout_sets.session_id` and
+  /// `session_exercise_overrides.session_id` are both declared
+  /// `ON DELETE CASCADE` and `PRAGMA foreign_keys` is on, so the session's sets
+  /// and mid-session substitutions go with it in one statement.
+  ///
+  /// Program rows are deliberately untouched: a target the lifter raised from
+  /// this session is a separate, deliberate edit to the program, and nothing
+  /// records which program row came from which session or what it held before.
+  Future<void> deleteSession(String id) async {
+    await _db.delete('workout_sessions', where: 'id = ?', whereArgs: [id]);
+  }
+
   Future<void> abandonSession(String id) async {
     await _db.update(
       'workout_sessions',

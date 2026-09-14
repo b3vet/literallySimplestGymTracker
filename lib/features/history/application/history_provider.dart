@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../home/application/home_provider.dart';
 import '../../programs/application/programs_provider.dart';
+import '../../stats/application/stats_provider.dart';
 import '../../workout/application/active_workout_controller.dart';
+import '../../workout/application/summary_controller.dart';
 import '../../workout/domain/workout_session.dart';
 import '../../workout/domain/workout_set.dart';
 
@@ -122,4 +125,34 @@ String? _mostFrequentExerciseId(List<WorkoutSet> sets) {
     counts.update(s.exerciseId, (v) => v + 1, ifAbsent: () => 1);
   }
   return counts.entries.reduce((a, b) => a.value >= b.value ? a : b).key;
+}
+
+/// Delete a completed session and refresh everything derived from it.
+///
+/// A session is an input to far more than the history list: personal records
+/// are computed against all sets logged before a session, "vs last time" on the
+/// summary compares against the previous session on the same day, Stats plots
+/// per-exercise progression, and home shows the last session's totals. Deleting
+/// without invalidating those leaves the app quietly showing records and
+/// comparisons against sets that no longer exist — so this is the ONLY
+/// supported way to delete a session.
+///
+/// [programUpdatesProvider] is deliberately NOT invalidated: whether the lifter
+/// applied a target to their program is a separate decision from whether this
+/// workout stays in history, and invalidating it would reset those flags.
+Future<void> deleteSessionAndRefresh(WidgetRef ref, String sessionId) async {
+  await ref.read(workoutDaoProvider).deleteSession(sessionId);
+
+  ref.invalidate(historyListProvider);
+  ref.invalidate(sessionDetailProvider);
+  ref.invalidate(lastSessionSummaryProvider);
+  // Families: invalidating the family clears every keyed instance.
+  ref.invalidate(sessionPrsProvider);
+  ref.invalidate(sessionSummaryProvider);
+  ref.invalidate(lastSetForExerciseProvider);
+  ref.invalidate(lastWeightForExerciseProvider);
+  // Stats: the exercise list itself can shrink if this was the only session
+  // that used a given movement.
+  ref.invalidate(loggedExercisesProvider);
+  ref.invalidate(exerciseProgressionProvider);
 }

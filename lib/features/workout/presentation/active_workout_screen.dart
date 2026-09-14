@@ -16,12 +16,10 @@ import '../application/active_workout_controller.dart';
 import '../application/rest_timer_controller.dart';
 import '../application/watch_sync_controller.dart';
 import '../domain/active_session.dart';
-import '../domain/plate_math.dart';
 import '../domain/workout_set.dart';
 import '../../history/application/history_provider.dart';
 import '../../home/application/home_provider.dart';
 import '../../stats/application/stats_provider.dart';
-import 'plate_line.dart';
 import 'program_status_sheet.dart';
 import 'rest_timer_banner.dart';
 import 'set_log_sheet.dart';
@@ -136,15 +134,6 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
     WeightUnit unit,
   ) {
     final t = LsTheme.of(context);
-    final settings = ref.watch(settingsProvider);
-    // Read-only plate breakdown for this exercise's default/last weight. The
-    // default weight is already kg, so it feeds solvePlates directly. Recomputed
-    // whenever build runs (i.e. when the current exercise / settings change).
-    final platePreview = solvePlates(
-      targetKg: current.defaultWeightKg,
-      barKg: settings.barWeightKg,
-      inventoryKg: settings.plateInventoryKg,
-    );
     final setsLoggedForCurrent = session.loggedSets
         .where((s) => s.exerciseId == current.exerciseId)
         .toList();
@@ -299,14 +288,6 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                         text: unit.short,
                       ),
                     ],
-                  ),
-                  // Read-only per-side plate breakdown for the default weight.
-                  // Sits inside the meta block (tight gap above) — not a card.
-                  const SizedBox(height: LsGap.sub),
-                  PlateLine(
-                    result: platePreview,
-                    unit: unit,
-                    onBarTap: null,
                   ),
                   const SizedBox(height: LsGap.loose),
                   // When the slot has been substituted AND the user already

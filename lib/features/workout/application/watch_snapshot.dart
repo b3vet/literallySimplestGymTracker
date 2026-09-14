@@ -46,8 +46,6 @@ WatchSessionSnapshot buildWatchSnapshot({
       cursorExerciseIdx: 0,
       restEndsAtMs: restEndsAtMs,
       restDefaultSeconds: settings.restSeconds,
-      barWeightKg: settings.barWeightKg,
-      plateInventoryKg: settings.plateInventoryKg,
       queue: const [],
     );
   }
@@ -97,8 +95,6 @@ WatchSessionSnapshot buildWatchSnapshot({
     cursorExerciseIdx: session.cursor.exerciseIdx,
     restEndsAtMs: restEndsAtMs,
     restDefaultSeconds: settings.restSeconds,
-    barWeightKg: settings.barWeightKg,
-    plateInventoryKg: settings.plateInventoryKg,
     queue: queue,
   );
 }

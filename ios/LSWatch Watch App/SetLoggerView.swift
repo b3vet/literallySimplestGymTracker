@@ -134,7 +134,6 @@ struct SetLoggerView: View {
                 }
                 .labelsHidden()
                 .id(weightStep)
-                plateLine(spec.entry)
                 stepPill
             case .rir:
                 Picker("", selection: $topRir) {
@@ -244,70 +243,6 @@ struct SetLoggerView: View {
 
     // MARK: - Plate breakdown (offline, recomputed as the Crown turns)
 
-    /// A single passive plate-loading readout under the WEIGHT wheel, recomputed
-    /// from the current entry weight every time the Crown moves it. Mirrors the
-    /// phone's one-line plate readout (eyebrow + per-side breakdown): muted
-    /// eyebrow + glue, accent numerals, auto-scaling to fit the wrist width.
-    @ViewBuilder
-    private func plateLine(_ entry: Int) -> some View {
-        let display = entry < weightDisplay.count ? weightDisplay[entry] : 0
-        let targetKg = WeightConv.toKg(display, unit: model.unit)
-        let result = solvePlates(
-            targetKg: targetKg,
-            barKg: model.barKg,
-            inventoryKg: model.plateInventory
-        )
-        VStack(spacing: 1) {
-            Text(PlateFormat.eyebrow(model.barKg, unit: model.unit))
-                .font(LSType.monoMeta)
-                .tracking(0.8)
-                .foregroundStyle(LSColor.text3)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-            plateBreakdownText(result)
-                .font(LSType.monoData)
-                .lineLimit(1)
-                .minimumScaleFactor(0.5)
-        }
-        .frame(maxWidth: .infinity)
-    }
-
-    /// The per-side breakdown as one auto-scaling Text: numerals in accent, the
-    /// `+` / `≈` glue, the trailing signed delta and the bar-only / empty-bar
-    /// fallbacks in `text2`. Mirrors `PlateFormat.line(..., compact: true)`
-    /// segment-for-segment — including the trailing `(−x)` the phone's PlateLine
-    /// shows for the closest (non-exact) case.
-    private func plateBreakdownText(_ r: PlateResult) -> Text {
-        if r.belowBar {
-            return Text("EMPTY BAR").foregroundStyle(LSColor.text2)
-        }
-        if r.barOnly {
-            return Text("BAR ONLY").foregroundStyle(LSColor.text2)
-        }
-        var out = Text("")
-        if !r.exact {
-            out = out
-                + Text("≈\(PlateFormat.approxTotal(r, unit: model.unit)) ")
-                    .foregroundStyle(LSColor.text2)
-        }
-        for (i, kg) in r.perSide.enumerated() {
-            if i > 0 {
-                out = out + Text("+").foregroundStyle(LSColor.text2)
-            }
-            out = out
-                + Text(PlateFormat.plateNum(kg, unit: model.unit))
-                    .foregroundStyle(accent.accent)
-        }
-        if !r.exact {
-            // Hardcoded `−` to mirror the phone's PlateLine: this nearest-at-or-
-            // below DP is always UNDER target when non-exact, so the trailing
-            // magnitude is a deficit.
-            out = out
-                + Text(" (−\(PlateFormat.deltaNum(r, unit: model.unit)))")
-                    .foregroundStyle(LSColor.text2)
-        }
-        return out
-    }
 
     // MARK: - Weight-step switcher
 

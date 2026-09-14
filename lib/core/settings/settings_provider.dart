@@ -46,15 +46,7 @@ class SettingsNotifier extends Notifier<AppSettings> {
     state = state.copyWith(onboardingComplete: complete);
   }
 
-  Future<void> setBarWeightKg(double kg) async {
-    await ref.read(settingsRepositoryProvider).writeBarWeightKg(kg);
-    state = state.copyWith(barWeightKg: kg);
-  }
 
-  Future<void> setPlateInventoryKg(List<double> kg) async {
-    await ref.read(settingsRepositoryProvider).writePlateInventoryKg(kg);
-    state = state.copyWith(plateInventoryKg: kg);
-  }
 }
 
 final settingsProvider =
