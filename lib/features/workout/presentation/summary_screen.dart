@@ -1297,12 +1297,9 @@ class _LiftCard extends ConsumerWidget {
 
   Widget _expandedBody(BuildContext context, WidgetRef ref, LsTheme t) {
     final e = exercise;
-    // A variant's TARGET line: the slot's sets/reps at the variant's weight.
-    final pe = e.planPe ??
-        (e.planVariant == null
-            ? null
-            : e.variantSlotPe
-                ?.copyWith(defaultWeightKg: e.planVariant!.defaultWeightKg));
+    // A variant's TARGET line: its own prescription (DEC-0007 #13), the
+    // slot's value for each field it inherits.
+    final pe = e.planPe ?? e.variantPlan;
     final update = ref
         .watch(programUpdatesProvider(sessionId))
         .value

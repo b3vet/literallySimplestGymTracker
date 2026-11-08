@@ -66,6 +66,7 @@ class ExerciseSummary {
     this.variantOfName,
     this.substituteSlotPe,
     this.substituteSlotName,
+    this.substituteOverride,
     this.isFirstExposure = false,
   });
 
@@ -92,8 +93,9 @@ class ExerciseSummary {
   final ProgramExercise? planPe;
 
   /// SOW-14: set when this exercise is a VARIANT of one of the day's slots
-  /// (and not itself a slot's base). Its target is the variant's own weight;
-  /// [variantSlotPe] is the slot (sets/reps), [variantOfName] its base name.
+  /// (and not itself a slot's base). Its target is the variant's own
+  /// prescription, inheriting from [variantSlotPe] (the slot) each field it
+  /// leaves null — see [variantPlan]; [variantOfName] is the base's name.
   final ProgramExerciseVariant? planVariant;
   final ProgramExercise? variantSlotPe;
   final String? variantOfName;
@@ -104,12 +106,24 @@ class ExerciseSummary {
   final ProgramExercise? substituteSlotPe;
   final String? substituteSlotName;
 
+  /// The slot's override row when it still runs this swapped-in exercise:
+  /// its targets are the session prescription SAVE AS VARIANT stores.
+  final SessionExerciseOverride? substituteOverride;
+
   /// H4: the exercise's first-ever session (outside the first-ever workout,
   /// which has its own baseline treatment). [pr] is null; the card reads
   /// FIRST TIME instead of a guaranteed, meaningless weight PR.
   final bool isFirstExposure;
 
   int get setCount => setGroups.length;
+
+  /// A variant's target as it runs: its own sets, reps, drops, weight and
+  /// step, the slot's for each one it leaves null (DEC-0007 #13).
+  ProgramExercise? get variantPlan => planVariant == null ||
+          variantSlotPe == null
+      ? null
+      : planVariant!.resolvedOn(variantSlotPe!);
+
   bool get isPr => pr != null && pr!.isPr;
   bool get isVariant => planVariant != null;
   bool get inPlan => planPe != null || planVariant != null;
@@ -321,6 +335,9 @@ final sessionSummaryProvider =
       substituteSlotName: attribution[id]?.variant == null
           ? attribution[id]?.slot.exerciseName
           : null,
+      substituteOverride: attribution[id]?.variant == null
+          ? attribution[id]?.override
+          : null,
     ));
   }
 
@@ -340,12 +357,18 @@ final sessionSummaryProvider =
 
 /// Where a logged exercise that is NOT a slot's base belongs (SOW-14).
 class SlotAttribution {
-  const SlotAttribution({required this.slot, this.variant});
+  const SlotAttribution({required this.slot, this.variant, this.override});
   final ProgramExerciseView slot;
 
   /// The slot's variant row for the exercise; null when the exercise was only
   /// swapped into [slot] ("Change exercise") and isn't a variant of it.
   final ProgramExerciseVariant? variant;
+
+  /// For a swap: [slot]'s override row when the exercise is still the one it
+  /// runs (`exercise_id`), i.e. the row holds its session prescription. Null
+  /// when the slot moved on (only `previous_exercise_id` matches) or for a
+  /// lost link of a swap chain.
+  final SessionExerciseOverride? override;
 }
 
 /// Attribute each logged exercise to a day slot. Priority: a slot's base
@@ -428,7 +451,10 @@ Map<String, SlotAttribution> attributeToSlots({
     if (found == null) {
       for (final o in touching) {
         if (o.exerciseId == id || o.previousExerciseId == id) {
-          found = SlotAttribution(slot: slotById[o.programExerciseId]!);
+          found = SlotAttribution(
+            slot: slotById[o.programExerciseId]!,
+            override: o.exerciseId == id ? o : null,
+          );
           break;
         }
       }
@@ -475,6 +501,7 @@ class ProgramUpdate {
     required this.targetSets,
     required this.targetRepsMin,
     required this.targetRepsMax,
+    this.dropCount = 0,
     this.planPe,
     this.applied = false,
     this.createdProgramExerciseId,
@@ -496,6 +523,10 @@ class ProgramUpdate {
   final int targetSets;
   final int targetRepsMin;
   final int targetRepsMax;
+
+  /// Drops per set — set on [ProgramUpdateKind.addVariant], which stores the
+  /// whole prescription on the new variant (DEC-0007 #13); 0 otherwise.
+  final int dropCount;
 
   /// The plan row as it was BEFORE applying — kept verbatim so undo restores
   /// every field, not just the weight. Null for [ProgramUpdateKind.add].
@@ -543,6 +574,7 @@ class ProgramUpdate {
         targetSets: targetSets,
         targetRepsMin: targetRepsMin,
         targetRepsMax: targetRepsMax,
+        dropCount: dropCount,
         planPe: planPe,
         applied: applied ?? this.applied,
         createdProgramExerciseId: clearCreated
@@ -591,6 +623,9 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
       final variant = e.planVariant;
       if (variant != null) {
         // A variant is tracked on its own (H1): offer its target, never ADD.
+        // Same rule as a base raise — today's top weight beat the variant's
+        // own target, or a weight PR. The raise moves the weight only; the
+        // variant's sets, reps and drops (or its NULLs) stay as they are.
         if (e.topWeightKg <= variant.defaultWeightKg + 1e-6 && !isWeightPr) {
           continue;
         }
@@ -612,15 +647,27 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
       final pe = e.planPe;
       final sub = e.substituteSlotPe;
       if (pe == null && sub != null) {
+        // SAVE AS VARIANT keeps the swap's session prescription — the
+        // override's targets while the slot still runs it, else what was
+        // done (top sets' rep range, the deepest drop chain).
+        final o = e.substituteOverride;
+        var topMin = e.topReps, topMax = e.topReps, drops = 0;
+        for (final g in e.setGroups) {
+          if (g.isEmpty) continue;
+          if (g.first.reps < topMin) topMin = g.first.reps;
+          if (g.first.reps > topMax) topMax = g.first.reps;
+          if (g.length - 1 > drops) drops = g.length - 1;
+        }
         out.add(ProgramUpdate(
           exerciseId: e.exerciseId,
           exerciseName: e.name,
           kind: ProgramUpdateKind.addVariant,
           programDayId: dayId,
           proposedTargetKg: e.topWeightKg,
-          targetSets: e.setCount,
-          targetRepsMin: repsMin,
-          targetRepsMax: repsMax,
+          targetSets: o?.targetSets ?? e.setCount,
+          targetRepsMin: o?.targetRepsMin ?? topMin,
+          targetRepsMax: o?.targetRepsMax ?? topMax,
+          dropCount: o?.dropCount ?? drops,
           programExerciseId: sub.id,
           slotName: e.substituteSlotName,
         ));
@@ -770,6 +817,10 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
           programExerciseId: u.programExerciseId!,
           exerciseName: u.exerciseName,
           defaultWeightKg: u.proposedTargetKg,
+          targetSets: u.targetSets,
+          targetRepsMin: u.targetRepsMin,
+          targetRepsMax: u.targetRepsMax,
+          dropCount: u.dropCount,
         );
         return u.copyWith(applied: true, createdVariantId: created.id);
     }

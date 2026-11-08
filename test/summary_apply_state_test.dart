@@ -276,10 +276,16 @@ void main() {
       );
       pressSlotId = press.id;
       rowSlotId = row.id;
+      // DEC-0007 #13: the machine has its own prescription; DB inherits.
       final machine = await pDao.addVariant(
         programExerciseId: press.id,
         exerciseName: 'Shoulder Press (Machine)',
         defaultWeightKg: 40,
+        weightStepKg: 5,
+        targetSets: 3,
+        targetRepsMin: 6,
+        targetRepsMax: 8,
+        dropCount: 1,
       );
       final dbv = await pDao.addVariant(
         programExerciseId: press.id,
@@ -316,10 +322,12 @@ void main() {
         programExerciseId: row.id,
         exerciseId: cable.id,
         previousExerciseId: row.exerciseId,
-        targetSets: 2,
-        targetRepsMin: 8,
-        targetRepsMax: 10,
+        // The swap's session prescription (≠ what was logged: 2 × 8).
+        targetSets: 3,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
         defaultWeightKg: 50,
+        dropCount: 1,
       );
       await logSets(wDao, today.id, cable.id, 55);
       await wDao.insertSessionExercise(
@@ -403,6 +411,86 @@ void main() {
         40,
       );
       expect(kindOf(await vUpdates(), 'machine').applied, isFalse);
+    });
+
+    test('a variant\'s summary target is its own prescription; the DB '
+        'variant inherits the slot\'s', () async {
+      final s = await container.read(sessionSummaryProvider(vSessionId).future);
+      final m = s!.exercises.singleWhere((e) => e.exerciseId == ex['machine']);
+      final mp = m.variantPlan!;
+      expect(
+        [mp.targetSets, mp.targetRepsMin, mp.targetRepsMax, mp.dropCount],
+        [3, 6, 8, 1],
+      );
+      expect(mp.defaultWeightKg, 40);
+      final d = s.exercises.singleWhere((e) => e.exerciseId == ex['db']);
+      final dp = d.variantPlan!;
+      expect(
+        [dp.targetSets, dp.targetRepsMin, dp.targetRepsMax, dp.dropCount],
+        [2, 8, 10, 0],
+        reason: 'NULLs inherit the slot',
+      );
+      expect(dp.defaultWeightKg, 22.5);
+    });
+
+    test('raiseVariant moves the weight only; undo restores every field',
+        () async {
+      final pDao = ProgramDao(db);
+      Future<List<Object?>> machineRow() async {
+        final v = (await pDao.listVariants(pressSlotId))
+            .singleWhere((v) => v.variant.id == machineVariantId)
+            .variant;
+        return [
+          v.exerciseId,
+          v.position,
+          v.defaultWeightKg,
+          v.weightStepKg,
+          v.targetSets,
+          v.targetRepsMin,
+          v.targetRepsMax,
+          v.dropCount,
+        ];
+      }
+
+      final before = await machineRow();
+      await vCtrl().applyOne(ex['machine']!);
+      expect(await machineRow(), [...before.take(2), 45.0, ...before.skip(3)]);
+      await vCtrl().undoOne(ex['machine']!);
+      expect(await machineRow(), before);
+    });
+
+    test('SAVE AS VARIANT stores the swap\'s session prescription', () async {
+      await vCtrl().applyOne(ex['cable']!);
+      final v = (await ProgramDao(db).listVariants(rowSlotId)).single.variant;
+      expect(
+        [v.targetSets, v.targetRepsMin, v.targetRepsMax, v.dropCount],
+        [3, 10, 12, 1],
+        reason: 'the override row\'s targets',
+      );
+      expect(v.defaultWeightKg, 55, reason: 'today\'s top weight');
+    });
+
+    test('SAVE AS VARIANT falls back to what was done once the slot moved on',
+        () async {
+      // Back on the row afterwards: the override now runs the base and only
+      // remembers the cable as its previous exercise.
+      await WorkoutDao(db).upsertOverride(
+        sessionId: vSessionId,
+        programExerciseId: rowSlotId,
+        exerciseId: ex['row']!,
+        previousExerciseId: ex['cable'],
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 60,
+      );
+      final u = kindOf(await vUpdates(), 'cable');
+      expect(u.kind, ProgramUpdateKind.addVariant);
+      expect(
+        [u.targetSets, u.targetRepsMin, u.targetRepsMax, u.dropCount],
+        [2, 8, 8, 0],
+        reason: '2 sets of 8 logged, no drops',
+      );
     });
 
     test('addVariant creates the variant; undo deletes exactly that row',
