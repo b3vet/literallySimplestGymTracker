@@ -484,6 +484,43 @@ void main() {
       );
     });
 
+    // QA VAR-04: the first lookup of a variant without history cached `null`
+    // for the whole process, so its repeat chip never showed up later.
+    test('last-set lookups refresh after a set, a finish and an abandon',
+        () async {
+      final c = await started();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.switchVariant(0, machineId);
+      expect(await c.read(lastSetForExerciseProvider(machineId).future), isNull);
+      expect(
+        await c.read(lastWeightForExerciseProvider(machineId).future),
+        isNull,
+      );
+      await log(c, 42.5);
+      expect(
+        (await c.read(lastSetForExerciseProvider(machineId).future))?.weightKg,
+        42.5,
+        reason: 'refreshed after logging',
+      );
+      await ctrl.finish();
+
+      // Next workout, same process: the variant now has history.
+      expect(await c.read(lastSetForExerciseProvider(dbId).future), isNull);
+      await ctrl.start(dayId);
+      await ctrl.switchVariant(0, dbId);
+      await log(c, 20);
+      await ctrl.abandon();
+      expect(
+        (await c.read(lastSetForExerciseProvider(dbId).future))?.weightKg,
+        20,
+      );
+      expect(await c.read(lastWeightForExerciseProvider(dbId).future), 20);
+      expect(
+        (await c.read(lastSetForExerciseProvider(machineId).future))?.weightKg,
+        42.5,
+      );
+    });
+
     test('ignores slots without variants and unknown exercises', () async {
       final c = await started();
       final ctrl = c.read(activeSessionProvider.notifier);

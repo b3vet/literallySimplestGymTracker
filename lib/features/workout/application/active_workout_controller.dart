@@ -118,9 +118,13 @@ final workoutDaoProvider = Provider<WorkoutDao>((ref) {
 /// The single most-recent set ever logged for [exerciseId] (across all
 /// sessions), or null when the exercise has no history. Feeds the active-
 /// workout footer's 1-tap "repeat last set" chip (SOW-03). The in-session last
-/// set, when one exists, takes precedence at the call site — so this is only
-/// consulted before the first set of the exercise is logged this session,
-/// which is why a stale cached value after logging is harmless.
+/// set, when one exists, takes precedence at the call site.
+///
+/// Not autoDispose, so it is invalidated (with [lastWeightForExerciseProvider])
+/// whenever a set is written or a workout ends — see
+/// [ActiveWorkoutController]. Otherwise a lookup made while an exercise had no
+/// history (every first switch to a new variant) cached that "nothing" for the
+/// whole process and the chip never appeared later (QA VAR-04).
 final lastSetForExerciseProvider =
     FutureProvider.family<WorkoutSet?, String>((ref, exerciseId) {
   return ref.watch(workoutDaoProvider).lastSetForExercise(exerciseId);
@@ -168,6 +172,13 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   @override
   Future<ActiveSession?> build() async {
     return _resumeIfPossible();
+  }
+
+  /// Drop the cached "last set / last weight" lookups after a set is written
+  /// or a workout ends, so the next lookup reads the DB (QA VAR-04).
+  void _invalidateLastSets() {
+    ref.invalidate(lastSetForExerciseProvider);
+    ref.invalidate(lastWeightForExerciseProvider);
   }
 
   DateTime? _currentRestEndsAt() {
@@ -345,6 +356,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       cursor: nextCursor,
     );
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
     return newSet;
   }
@@ -382,6 +394,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         : current.cursor;
     final updated = current.copyWith(loggedSets: logged, cursor: nextCursor);
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
   }
 
@@ -395,6 +408,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         current.loggedSets.where((s) => s.groupKey != groupKey).toList();
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -429,6 +443,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     }
     final next = current.copyWith(loggedSets: logged);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -482,6 +497,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       cursor: nextCursor,
     );
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
   }
 
@@ -495,6 +511,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ];
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -506,6 +523,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         current.loggedSets.where((s) => s.id != setId).toList();
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -635,6 +653,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       await _workoutDao.deleteSet(removed.id);
       newLoggedSets =
           current.loggedSets.where((s) => s.id != removed.id).toList();
+      _invalidateLastSets();
     }
     await _writeSlotTargetSets(
       current,
@@ -1060,6 +1079,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ref.read(restTimerProvider.notifier).dismiss();
     await _workoutDao.completeSession(current.sessionId);
     state = const AsyncValue.data(null);
+    _invalidateLastSets();
     await _liveActivity.end();
     return current.sessionId;
   }
@@ -1070,6 +1090,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ref.read(restTimerProvider.notifier).dismiss(); // see finish() — SOW-03 §5
     await _workoutDao.abandonSession(current.sessionId);
     state = const AsyncValue.data(null);
+    _invalidateLastSets();
     await _liveActivity.end();
   }
 }
