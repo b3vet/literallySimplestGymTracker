@@ -329,6 +329,54 @@ void main() {
     await closeDb(tester);
   });
 
+  // D-0016 review #2: the slot row the sheet reads was cached for the whole
+  // process, so after the slot changed from 3×8-10 to 5×5 the inheriting
+  // cards, the ADD prefill and the edit of a NULL variant still read 3×8-10.
+  testWidgets('reopening the sheet reads the slot as it is now', (
+    tester,
+  ) async {
+    await seed(tester, withVariant: true);
+    await pumpHost(
+      tester,
+      (c) => showVariantsSheet(
+        c,
+        programExerciseId: slotId,
+        baseName: 'Shoulder Press',
+      ),
+    );
+    expect(find.text('3×8-10 · 40 KG'), findsOneWidget);
+
+    // Close the sheet, change the slot to 5×5, open VARIANTS again.
+    tester.state<NavigatorState>(find.byType(Navigator)).pop();
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      final pe = (await dao.findProgramExercise(slotId))!;
+      await dao.updateProgramExercise(
+        pe.copyWith(targetSets: 5, targetRepsMin: 5, targetRepsMax: 5),
+      );
+    });
+    await tester.tap(find.text('OPEN'));
+    await settleDb(tester);
+    expect(find.text('5×5 · 40 KG'), findsOneWidget, reason: 'inherits 5×5');
+    expect(find.text('3×8-10 · 40 KG'), findsNothing);
+
+    // Edit the NULL variant and SAVE as is: it stores the slot's 5×5.
+    await tester.tap(find.text('SHOULDER PRESS (MACHINE)'));
+    await settleDb(tester);
+    await tester.pumpAndSettle();
+    final save = find.text('SAVE');
+    await tester.ensureVisible(save);
+    await tester.pumpAndSettle();
+    await tester.tap(save);
+    await settleDb(tester);
+    await tester.pumpAndSettle();
+    final v = (await tester.runAsync(
+      () => dao.listVariants(slotId),
+    ))!.single.variant;
+    expect([v.targetSets, v.targetRepsMin, v.targetRepsMax], [5, 5, 5]);
+    await closeDb(tester);
+  });
+
   testWidgets('variants sheet explains a rejected variant inline', (
     tester,
   ) async {

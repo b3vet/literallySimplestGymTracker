@@ -50,9 +50,12 @@ final dayExercisesProvider =
 });
 
 /// One program slot (its own row, no name) — the variants sheet resolves each
-/// variant's inherited prescription on it.
+/// variant's inherited prescription on it. autoDispose: the slot's plan can
+/// change between two openings of the sheet (day editor, summary apply/undo),
+/// and a kept row would prefill — and SAVE — the stale one (D-0016 review
+/// #2). Those writers also invalidate it.
 final programExerciseProvider =
-    FutureProvider.family<ProgramExercise?, String>((ref, id) {
+    FutureProvider.autoDispose.family<ProgramExercise?, String>((ref, id) {
   return ref.watch(programDaoProvider).findProgramExercise(id);
 });
 

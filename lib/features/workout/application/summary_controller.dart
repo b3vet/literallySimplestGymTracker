@@ -865,6 +865,7 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
     ref.invalidate(dayExercisesProvider(list.first.programDayId));
     ref.invalidate(dayVariantsProvider(list.first.programDayId));
     ref.invalidate(slotVariantsProvider);
+    ref.invalidate(programExerciseProvider);
   }
 }
 

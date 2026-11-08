@@ -262,6 +262,7 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
     }
     ref.invalidate(dayExercisesProvider(widget.dayId));
     ref.invalidate(dayVariantsProvider(widget.dayId));
+    ref.invalidate(programExerciseProvider(v.pe.id));
     // VARIANTS row: the slot's edits are saved above, then the variants sheet
     // opens on the (possibly renamed) base.
     if (result.manageVariants && !result.delete && context.mounted) {
