@@ -1,7 +1,12 @@
+import 'program_exercise.dart';
+
 /// One variant of a program slot (SOW-14): an alternative exercise for the same
 /// slot — e.g. "Shoulder Press (Machine)" for a "Shoulder Press" slot — with
-/// its OWN target weight and weight step. Sets, reps and drop count come from
-/// the slot. PRs, Stats and targets are tracked per variant (DEC-0007 H1).
+/// its OWN prescription: target weight and weight step, and (DB v8, DEC-0007
+/// #13) target sets, rep range and drop count. Each of those may be NULL,
+/// meaning "inherit from the slot" — what every variant written by 1.5.0 (13)
+/// has; the editor saves explicit values. PRs, Stats and targets are tracked
+/// per variant (DEC-0007 H1).
 class ProgramExerciseVariant {
   const ProgramExerciseVariant({
     required this.id,
@@ -10,6 +15,10 @@ class ProgramExerciseVariant {
     required this.position,
     required this.defaultWeightKg,
     this.weightStepKg,
+    this.targetSets,
+    this.targetRepsMin,
+    this.targetRepsMax,
+    this.dropCount,
   });
 
   final String id;
@@ -20,6 +29,28 @@ class ProgramExerciseVariant {
 
   /// Weight step in **kg**; NULL → fall back to the slot's step.
   final double? weightStepKg;
+
+  /// Own prescription; each NULL → the slot's value ([resolvedOn]).
+  final int? targetSets;
+  final int? targetRepsMin;
+  final int? targetRepsMax;
+  final int? dropCount;
+
+  /// The slot row as this variant runs it: the variant's exercise, weight and
+  /// every prescription field it sets, the slot's value for each one it
+  /// leaves NULL. Ids and position stay the slot's.
+  ProgramExercise resolvedOn(ProgramExercise slot) => ProgramExercise(
+    id: slot.id,
+    programDayId: slot.programDayId,
+    exerciseId: exerciseId,
+    position: slot.position,
+    targetSets: targetSets ?? slot.targetSets,
+    targetRepsMin: targetRepsMin ?? slot.targetRepsMin,
+    targetRepsMax: targetRepsMax ?? slot.targetRepsMax,
+    defaultWeightKg: defaultWeightKg,
+    weightStepKg: weightStepKg ?? slot.weightStepKg,
+    dropCount: dropCount ?? slot.dropCount,
+  );
 
   ProgramExerciseVariant copyWith({
     String? exerciseId,
@@ -34,6 +65,10 @@ class ProgramExerciseVariant {
     position: position ?? this.position,
     defaultWeightKg: defaultWeightKg ?? this.defaultWeightKg,
     weightStepKg: clearWeightStep ? null : (weightStepKg ?? this.weightStepKg),
+    targetSets: targetSets,
+    targetRepsMin: targetRepsMin,
+    targetRepsMax: targetRepsMax,
+    dropCount: dropCount,
   );
 
   factory ProgramExerciseVariant.fromRow(Map<String, Object?> row) =>
@@ -44,6 +79,10 @@ class ProgramExerciseVariant {
         position: (row['position'] as num).toInt(),
         defaultWeightKg: (row['default_weight'] as num).toDouble(),
         weightStepKg: (row['weight_step'] as num?)?.toDouble(),
+        targetSets: (row['target_sets'] as num?)?.toInt(),
+        targetRepsMin: (row['rep_min'] as num?)?.toInt(),
+        targetRepsMax: (row['rep_max'] as num?)?.toInt(),
+        dropCount: (row['drop_count'] as num?)?.toInt(),
       );
 
   Map<String, Object?> toRow() => {
@@ -53,6 +92,10 @@ class ProgramExerciseVariant {
     'position': position,
     'default_weight': defaultWeightKg,
     'weight_step': weightStepKg,
+    'target_sets': targetSets,
+    'rep_min': targetRepsMin,
+    'rep_max': targetRepsMax,
+    'drop_count': dropCount,
   };
 }
 

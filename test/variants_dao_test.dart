@@ -100,6 +100,77 @@ void main() {
     ]);
   });
 
+  test(
+    'a variant stores its own prescription; NULL inherits the slot',
+    () async {
+      final v = await dao.addVariant(
+        programExerciseId: press.id,
+        exerciseName: 'Shoulder Press (Machine)',
+        defaultWeightKg: 40,
+        weightStepKg: 5,
+        targetSets: 4,
+        targetRepsMin: 6,
+        targetRepsMax: 8,
+        dropCount: 2,
+      );
+      var stored = (await dao.listVariants(press.id)).single.variant;
+      expect(
+        [
+          stored.targetSets,
+          stored.targetRepsMin,
+          stored.targetRepsMax,
+          stored.dropCount,
+        ],
+        [4, 6, 8, 2],
+      );
+      final run = stored.resolvedOn(press);
+      expect(run.targetSets, 4);
+      expect(run.targetRepsMax, 8);
+      expect(run.exerciseId, v.exerciseId);
+      expect(run.id, press.id, reason: 'still the slot');
+
+      await dao.editVariant(
+        id: v.id,
+        exerciseName: 'Shoulder Press (Machine)',
+        defaultWeightKg: 42.5,
+        weightStepKg: 5,
+        targetSets: 2,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
+        dropCount: 0,
+      );
+      stored = (await dao.listVariants(press.id)).single.variant;
+      expect(
+        [
+          stored.targetSets,
+          stored.targetRepsMin,
+          stored.targetRepsMax,
+          stored.dropCount,
+          stored.defaultWeightKg,
+        ],
+        [2, 10, 12, 0, 42.5],
+      );
+
+      // A raise keeps the prescription (copyWith carries it).
+      await dao.updateVariant(stored.copyWith(defaultWeightKg: 45));
+      stored = (await dao.listVariants(press.id)).single.variant;
+      expect(stored.targetSets, 2);
+      expect(stored.dropCount, 0);
+
+      final inherit = await add('Shoulder Press (DB)', 20);
+      final r = inherit.resolvedOn(press);
+      expect(
+        [r.targetSets, r.targetRepsMin, r.targetRepsMax, r.dropCount],
+        [
+          press.targetSets,
+          press.targetRepsMin,
+          press.targetRepsMax,
+          press.dropCount,
+        ],
+      );
+    },
+  );
+
   test('updateVariant writes the row verbatim', () async {
     final v = await add('Shoulder Press (Machine)', 40);
     await dao.updateVariant(v.copyWith(defaultWeightKg: 42.5));
@@ -230,18 +301,20 @@ void main() {
       await dao.updateProgramExercise(row.copyWith(defaultWeightKg: 65));
     });
 
-    test('but still allows two slots sharing a base (1.4.1 behaviour)',
-        () async {
-      await dao.addProgramExercise(
-        programDayId: dayId,
-        exerciseName: 'Barbell Row',
-        targetSets: 2,
-        targetRepsMin: 12,
-        targetRepsMax: 15,
-        defaultWeightKg: 40,
-      );
-      expect(await dao.listProgramExercises(dayId), hasLength(3));
-    });
+    test(
+      'but still allows two slots sharing a base (1.4.1 behaviour)',
+      () async {
+        await dao.addProgramExercise(
+          programDayId: dayId,
+          exerciseName: 'Barbell Row',
+          targetSets: 2,
+          targetRepsMin: 12,
+          targetRepsMax: 15,
+          defaultWeightKg: 40,
+        );
+        expect(await dao.listProgramExercises(dayId), hasLength(3));
+      },
+    );
 
     test('but allows the same variant on a slot of another day', () async {
       final p = await dao.createProgram('Q');
@@ -291,18 +364,21 @@ void main() {
           'weight_step': null,
         });
 
-    test('a variant equal to a base on the day is hidden (the base wins)',
-        () async {
-      await add('Shoulder Press (Machine)', 40);
-      // The slot's own base (1.4.1 renamed the base to its variant) and
-      // another slot's base.
-      await rawVariant(press.id, press.exerciseId, 5);
-      await rawVariant(press.id, row.exerciseId, 6);
-      final day = await dao.listVariantsForDay(dayId);
-      expect(day[press.id]!.map((v) => v.exerciseName),
-          ['Shoulder Press (Machine)']);
-      expect((await dao.listVariants(press.id)).length, 1);
-    });
+    test(
+      'a variant equal to a base on the day is hidden (the base wins)',
+      () async {
+        await add('Shoulder Press (Machine)', 40);
+        // The slot's own base (1.4.1 renamed the base to its variant) and
+        // another slot's base.
+        await rawVariant(press.id, press.exerciseId, 5);
+        await rawVariant(press.id, row.exerciseId, 6);
+        final day = await dao.listVariantsForDay(dayId);
+        expect(day[press.id]!.map((v) => v.exerciseName), [
+          'Shoulder Press (Machine)',
+        ]);
+        expect((await dao.listVariants(press.id)).length, 1);
+      },
+    );
 
     test('a variant on two slots shows on the first slot only', () async {
       final machine = await add('Shoulder Press (Machine)', 40);

@@ -437,6 +437,12 @@ class ProgramDao {
     });
   }
 
+  Future<ProgramExercise?> findProgramExercise(String id) async {
+    final rows = await _db.query('program_exercises',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : ProgramExercise.fromRow(rows.first);
+  }
+
   Future<void> deleteProgramExercise(String id) async {
     await _db.delete('program_exercises', where: 'id = ?', whereArgs: [id]);
   }
@@ -513,12 +519,17 @@ class ProgramDao {
 
   /// Add a variant to a slot, last in order. Throws [VariantConflict] when the
   /// exercise is the slot's base, already a variant of it, or another slot's
-  /// base or variant on the same day (SOW-14 day rule).
+  /// base or variant on the same day (SOW-14 day rule). A prescription field
+  /// left null inherits the slot's value; the editor always passes all four.
   Future<ProgramExerciseVariant> addVariant({
     required String programExerciseId,
     required String exerciseName,
     required double defaultWeightKg,
     double? weightStepKg,
+    int? targetSets,
+    int? targetRepsMin,
+    int? targetRepsMax,
+    int? dropCount,
   }) async {
     final exercise = await findOrCreateExercise(exerciseName);
     return _db.transaction((txn) async {
@@ -536,6 +547,10 @@ class ProgramDao {
         position: maxPos + 1,
         defaultWeightKg: defaultWeightKg,
         weightStepKg: weightStepKg,
+        targetSets: targetSets,
+        targetRepsMin: targetRepsMin,
+        targetRepsMax: targetRepsMax,
+        dropCount: dropCount,
       );
       await txn.insert('program_exercise_variants', v.toRow());
       return v;
@@ -543,12 +558,17 @@ class ProgramDao {
   }
 
   /// Edit a variant from the editor: name (may switch to another exercise),
-  /// weight and step. Same rules as [addVariant].
+  /// weight, step and prescription — written as given (null = inherit). Same
+  /// rules as [addVariant].
   Future<ProgramExerciseVariant> editVariant({
     required String id,
     required String exerciseName,
     required double defaultWeightKg,
     double? weightStepKg,
+    int? targetSets,
+    int? targetRepsMin,
+    int? targetRepsMax,
+    int? dropCount,
   }) async {
     final exercise = await findOrCreateExercise(exerciseName);
     return _db.transaction((txn) async {
@@ -567,6 +587,10 @@ class ProgramDao {
         position: current.position,
         defaultWeightKg: defaultWeightKg,
         weightStepKg: weightStepKg,
+        targetSets: targetSets,
+        targetRepsMin: targetRepsMin,
+        targetRepsMax: targetRepsMax,
+        dropCount: dropCount,
       );
       await txn.update('program_exercise_variants', updated.toRow(),
           where: 'id = ?', whereArgs: [id]);

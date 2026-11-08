@@ -1,3 +1,5 @@
+import 'package:sqflite/sqflite.dart';
+
 const schemaV1 = <String>[
   '''
   CREATE TABLE exercises (
@@ -152,9 +154,13 @@ const schemaV6Up = <String>[
 
 /// v7 (SOW-14): exercise variants on a program slot. A slot keeps its base
 /// exercise (`program_exercises.exercise_id`) and may hold 0..N variants —
-/// ordinary `exercises` rows, each with its OWN target weight and step; sets,
-/// reps and drop count stay on the slot. No backfill: existing slots simply
-/// have no variants.
+/// ordinary `exercises` rows, each with its OWN target weight and step. No
+/// backfill: existing slots simply have no variants.
+///
+/// The prescription columns (`target_sets` … `drop_count`) arrived in v8 (see
+/// [schemaV8Up]); a fresh install gets them here, in the CREATE, so v8 is a
+/// no-op on it. A v7 file from 1.5.0 (13) already has the table, so the
+/// `IF NOT EXISTS` skips this statement and v8 adds the columns.
 ///
 /// **Must stay idempotent.** sqflite has no downgrade hook here and silently
 /// rewrites `user_version` when an older build (1.4.1, v6) opens this file, so
@@ -170,9 +176,48 @@ const schemaV7Up = <String>[
     position INTEGER NOT NULL,
     default_weight REAL NOT NULL,
     weight_step REAL,
+    target_sets INTEGER,
+    rep_min INTEGER,
+    rep_max INTEGER,
+    drop_count INTEGER,
     UNIQUE (program_exercise_id, exercise_id)
   )
   ''',
   'CREATE INDEX IF NOT EXISTS idx_pev_pe '
       'ON program_exercise_variants(program_exercise_id, position)',
 ];
+
+/// v8 (SOW-14, D-0016 / DEC-0007 #13): a variant carries its own prescription
+/// — target sets, rep range and drop count — next to its weight and step.
+/// All nullable: NULL means "inherit from the slot", so the variants written
+/// by 1.5.0 (13) keep behaving exactly as before.
+///
+/// Column name → SQL type, in the order they are added.
+const variantPrescriptionColumns = <String, String>{
+  'target_sets': 'INTEGER',
+  'rep_min': 'INTEGER',
+  'rep_max': 'INTEGER',
+  'drop_count': 'INTEGER',
+};
+
+/// Adds each [variantPrescriptionColumns] column that
+/// `program_exercise_variants` lacks. **Idempotent by inspection**, not by
+/// `IF NOT EXISTS` (SQLite has none for `ADD COLUMN`, and a second plain ALTER
+/// fails): sqflite rewrites `user_version` when 1.4.1 (v6) or 1.5.0 (13, v7)
+/// opens the file, so the next launch re-runs this step on a table that may
+/// already have every column. A fresh install creates them in [schemaV7Up],
+/// so this is a no-op there.
+Future<void> schemaV8Up(DatabaseExecutor db) async {
+  final have = {
+    for (final c in await db.rawQuery(
+      'PRAGMA table_info(program_exercise_variants)',
+    ))
+      c['name'] as String,
+  };
+  for (final e in variantPrescriptionColumns.entries) {
+    if (have.contains(e.key)) continue;
+    await db.execute(
+      'ALTER TABLE program_exercise_variants ADD COLUMN ${e.key} ${e.value}',
+    );
+  }
+}

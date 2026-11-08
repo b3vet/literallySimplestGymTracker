@@ -12,10 +12,11 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'support/test_db.dart';
 
-/// SOW-14 DB v7: `program_exercise_variants`. The migration is additive and
-/// must survive being re-run: Berke flips between the App Store build (1.4.1,
-/// v6) and TestFlight builds, and sqflite rewrites `user_version` back to 6
-/// without a hook when the older build opens the file.
+/// SOW-14 DB v7: `program_exercise_variants`; v8 (D-0016): its prescription
+/// columns. Both are additive and must survive being re-run: Berke flips
+/// between the App Store build (1.4.1, v6), TestFlight 1.5.0 (13, v7) and this
+/// build, and sqflite rewrites `user_version` without a hook when an older
+/// build opens the file.
 int? firstIntValue(List<Map<String, Object?>> rows) =>
     rows.isEmpty ? null : (rows.first.values.first as num?)?.toInt();
 
@@ -148,7 +149,7 @@ void main() {
     final db = await openTestDb();
     addTearDown(db.close);
     expect(await hasVariantsTable(db), isTrue);
-    expect(await db.getVersion(), 7);
+    expect(await db.getVersion(), kDbVersion);
   });
 
   test('v6 → v7 keeps every row and adds the table', () async {
@@ -159,7 +160,7 @@ void main() {
     await v6.close();
 
     final v7 = await openAsCurrent();
-    expect(await v7.getVersion(), 7);
+    expect(await v7.getVersion(), kDbVersion);
     expect(await hasVariantsTable(v7), isTrue);
     expect(await counts(v7), before);
     final slot = (await v7.query('program_exercises')).single;
@@ -193,7 +194,7 @@ void main() {
 
     // Back on 1.5.0: onUpgrade(6 → 7) runs the v7 step again.
     final again = await openAsCurrent();
-    expect(await again.getVersion(), 7);
+    expect(await again.getVersion(), kDbVersion);
     final variants = await again.query('program_exercise_variants');
     expect(variants.single['id'], 'v1', reason: 'the variant survived');
     await again.close();
@@ -204,9 +205,240 @@ void main() {
     await db.setVersion(6);
     await db.close();
     final reopened = await openAsCurrent();
-    expect(await reopened.getVersion(), 7);
+    expect(await reopened.getVersion(), kDbVersion);
     expect(await hasVariantsTable(reopened), isTrue);
     await reopened.close();
+  });
+
+  // ---------- v8: the variant's own prescription (D-0016) ----------
+
+  /// `program_exercise_variants` exactly as 1.5.0 (13) created it: no
+  /// prescription columns.
+  const build13V7 = <String>[
+    '''
+    CREATE TABLE IF NOT EXISTS program_exercise_variants (
+      id TEXT PRIMARY KEY,
+      program_exercise_id TEXT NOT NULL
+        REFERENCES program_exercises(id) ON DELETE CASCADE,
+      exercise_id TEXT NOT NULL REFERENCES exercises(id),
+      position INTEGER NOT NULL,
+      default_weight REAL NOT NULL,
+      weight_step REAL,
+      UNIQUE (program_exercise_id, exercise_id)
+    )
+    ''',
+    'CREATE INDEX IF NOT EXISTS idx_pev_pe '
+        'ON program_exercise_variants(program_exercise_id, position)',
+  ];
+
+  /// Open [path] the way 1.5.0 (13) does: v1…v6 + its v7, no v8. Like the app
+  /// it has no `onDowngrade`, so a newer file is just stamped back to 7.
+  Future<Database> openAsBuild13() => databaseFactoryFfi.openDatabase(
+    path,
+    options: OpenDatabaseOptions(
+      version: 7,
+      onConfigure: configureDatabase,
+      onCreate: (db, _) async {
+        for (final step in [
+          schemaV1,
+          schemaV2Up,
+          schemaV3Up,
+          schemaV4Up,
+          schemaV5Up,
+          schemaV6Up,
+          build13V7,
+        ]) {
+          for (final stmt in step) {
+            await db.execute(stmt);
+          }
+        }
+      },
+      onUpgrade: (db, oldVersion, _) async {
+        if (oldVersion < 7) {
+          for (final stmt in build13V7) {
+            await db.execute(stmt);
+          }
+        }
+      },
+    ),
+  );
+
+  Future<List<String>> variantColumns(Database db) async => [
+    for (final c in await db.rawQuery(
+      'PRAGMA table_info(program_exercise_variants)',
+    ))
+      c['name'] as String,
+  ];
+
+  /// A build-13 file with a slot (3 × 5-8, 1 drop) and two variants written
+  /// the way build 13 writes them (no prescription columns).
+  Future<String> seedBuild13(Database db) async {
+    await seedV6(db);
+    final slotId = (await db.query('program_exercises')).single['id'] as String;
+    final dao = ProgramDao(db);
+    for (final (i, name, kg) in [
+      (0, 'DB Press', 30.0),
+      (1, 'Smith Press', 70.0),
+    ]) {
+      await db.insert('program_exercise_variants', {
+        'id': 'v$i',
+        'program_exercise_id': slotId,
+        'exercise_id': (await dao.findOrCreateExercise(name)).id,
+        'position': i,
+        'default_weight': kg,
+        'weight_step': i == 0 ? 2.0 : null,
+      });
+    }
+    return slotId;
+  }
+
+  test('build 13 (v7) → v8 adds the columns, keeps every variant, NULLs '
+      'inherit from the slot', () async {
+    final b13 = await openAsBuild13();
+    final slotId = await seedBuild13(b13);
+    expect(await variantColumns(b13), isNot(contains('target_sets')));
+    final before = await b13.query('program_exercise_variants', orderBy: 'id');
+    final rowsBefore = await counts(b13);
+    await b13.close();
+
+    final v8 = await openAsCurrent();
+    expect(await v8.getVersion(), kDbVersion);
+    expect(
+      await variantColumns(v8),
+      containsAll(variantPrescriptionColumns.keys),
+    );
+    expect(await counts(v8), rowsBefore);
+    final after = await v8.query('program_exercise_variants', orderBy: 'id');
+    expect(after.length, 2);
+    for (var i = 0; i < 2; i++) {
+      for (final k in before[i].keys) {
+        expect(after[i][k], before[i][k], reason: 'v$i.$k preserved');
+      }
+      for (final k in variantPrescriptionColumns.keys) {
+        expect(after[i][k], isNull, reason: 'v$i.$k inherits');
+      }
+    }
+
+    final slot = (await ProgramDao(v8).listProgramExercises(
+      (await v8.query('program_days')).single['id'] as String,
+    )).single.pe;
+    final views = await ProgramDao(v8).listVariants(slotId);
+    expect(views.map((v) => v.exerciseName), ['DB Press', 'Smith Press']);
+    final db = views.first.variant.resolvedOn(slot);
+    expect(db.targetSets, 3);
+    expect(db.targetRepsMin, 5);
+    expect(db.targetRepsMax, 8);
+    expect(db.dropCount, 1);
+    expect(db.defaultWeightKg, 30);
+    expect(db.weightStepKg, 2.0);
+    expect(
+      views.last.variant.resolvedOn(slot).weightStepKg,
+      2.5,
+      reason: 'a NULL step still falls back to the slot',
+    );
+    await v8.close();
+  });
+
+  test(
+    'v8 survives every downgrade reset: 1.4.1 (v6) and build 13 (v7)',
+    () async {
+      final first = await openAsCurrent();
+      final slotId = await seedBuild13(first);
+      await ProgramDao(first).editVariant(
+        id: 'v0',
+        exerciseName: 'DB Press',
+        defaultWeightKg: 32,
+        weightStepKg: 2,
+        targetSets: 4,
+        targetRepsMin: 6,
+        targetRepsMax: 8,
+        dropCount: 0,
+      );
+      final shape = await variantColumns(first);
+      await first.close();
+
+      for (final older in [6, 7]) {
+        // The older build opens the file (no onDowngrade, like the app):
+        // sqflite stamps its version and leaves the table as it is.
+        final old = await databaseFactoryFfi.openDatabase(
+          path,
+          options: OpenDatabaseOptions(
+            version: older,
+            onConfigure: configureDatabase,
+          ),
+        );
+        expect(await old.getVersion(), older);
+        if (older == 7) {
+          // Build 13 keeps writing variants without the new columns.
+          await old.insert('program_exercise_variants', {
+            'id': 'v-b13',
+            'program_exercise_id': slotId,
+            'exercise_id': (await ProgramDao(
+              old,
+            ).findOrCreateExercise('Cable Press')).id,
+            'position': 9,
+            'default_weight': 20,
+          });
+        }
+        await old.close();
+
+        // Back on this build: v7 (and v8) run again — no duplicate-column error.
+        final again = await openAsCurrent();
+        expect(await again.getVersion(), kDbVersion);
+        expect(await variantColumns(again), shape, reason: 'after v$older');
+        final v0 = (await again.query(
+          'program_exercise_variants',
+          where: 'id = ?',
+          whereArgs: ['v0'],
+        )).single;
+        expect(
+          [v0['target_sets'], v0['rep_min'], v0['rep_max'], v0['drop_count']],
+          [4, 6, 8, 0],
+          reason: 'explicit values survive the v$older round trip',
+        );
+        expect(v0['default_weight'], 32);
+        await again.close();
+      }
+      final last = await openAsCurrent();
+      final b13Row = (await last.query(
+        'program_exercise_variants',
+        where: 'id = ?',
+        whereArgs: ['v-b13'],
+      )).single;
+      expect(b13Row['target_sets'], isNull, reason: 'written by 13: inherits');
+      await last.close();
+    },
+  );
+
+  test(
+    'fresh create has the columns in the table; v8 is a no-op on it',
+    () async {
+      final db = await openTestDb();
+      addTearDown(db.close);
+      final cols = await variantColumns(db);
+      expect(cols, containsAll(variantPrescriptionColumns.keys));
+      final sql =
+          (await db.rawQuery(
+                "SELECT sql FROM sqlite_master WHERE name = 'program_exercise_variants'",
+              )).single['sql']
+              as String;
+      expect(sql, contains('rep_min'), reason: 'created directly, not ALTERed');
+      await schemaV8Up(db);
+      await schemaV8Up(db);
+      expect(await variantColumns(db), cols);
+    },
+  );
+
+  test('wipeAllData works on a file upgraded from build 13', () async {
+    final b13 = await openAsBuild13();
+    await seedBuild13(b13);
+    await b13.close();
+    final v8 = await openAsCurrent();
+    await wipeAllData(v8);
+    expect(await v8.query('program_exercise_variants'), isEmpty);
+    expect(await v8.query('program_exercises'), isEmpty);
+    expect(await v8.query('exercises'), isEmpty);
+    await v8.close();
   });
 
   group('on a v7 database', () {

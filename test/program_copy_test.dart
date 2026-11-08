@@ -149,6 +149,10 @@ void main() {
             x.variant.position,
             x.variant.defaultWeightKg,
             x.variant.weightStepKg,
+            x.variant.targetSets,
+            x.variant.targetRepsMin,
+            x.variant.targetRepsMax,
+            x.variant.dropCount,
           ]);
         }
       }
@@ -164,6 +168,10 @@ void main() {
         exerciseName: 'Machine Press',
         defaultWeightKg: 70,
         weightStepKg: 5,
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 12,
+        dropCount: 1,
       );
       await dao.addVariant(
         programExerciseId: bench.pe.id,
@@ -201,6 +209,27 @@ void main() {
         copyVariants.last.variant.copyWith(defaultWeightKg: 99),
       );
       expect(await variantShape(origPush.id), before);
+    });
+
+    test('a copy carries the variant\'s own prescription (v8)', () async {
+      final original = await seedWithVariants();
+      final copy = await dao.duplicateProgram(original, name: 'C');
+      final copyPush = (await dao.listDays(copy.id)).first;
+      final slot = (await dao.listProgramExercises(copyPush.id)).first;
+      final vs = await dao.listVariants(slot.pe.id);
+      final machine = vs.first.variant;
+      expect(
+        [
+          machine.targetSets,
+          machine.targetRepsMin,
+          machine.targetRepsMax,
+          machine.dropCount,
+        ],
+        [3, 8, 12, 1],
+      );
+      final dbBench = vs.last.variant;
+      expect(dbBench.targetSets, isNull, reason: 'NULL stays NULL (inherits)');
+      expect(dbBench.resolvedOn(slot.pe).targetSets, 4);
     });
 
     test('a day copy carries its variants', () async {
