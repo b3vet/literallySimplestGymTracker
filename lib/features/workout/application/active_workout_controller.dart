@@ -1021,23 +1021,26 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     // An inserted exercise has no plan to revert to — leave it (the UI hides
     // "revert" for inserted slots; this guards the path defensively).
     if (slot.isInserted) return;
-    await _workoutDao.deleteOverride(
-      sessionId: current.sessionId,
-      programExerciseId: slot.programExerciseId,
-    );
-    // Rebuild this single queue item from the planned program. We refetch
-    // all planned exercises for the day and pick the one matching this
-    // slot's programExerciseId — cheap on a typical workout day.
+    // Resolve the plan FIRST (review #5): rebuild this single queue item from
+    // the planned program — refetch the day's slots and pick this one, cheap on
+    // a typical day. If the slot was deleted from the program mid-workout
+    // there is nothing to revert to: keep the override and the queue as they
+    // are, rather than deleting the override and then failing, which left the
+    // DB and memory out of sync.
     final planned =
         await _programDao.listProgramExercises(current.programDayId);
-    final original = planned.firstWhere(
-      (v) => v.pe.id == slot.programExerciseId,
-      orElse: () => throw StateError(
-          'Cannot revert: program exercise no longer exists.'),
-    );
+    ProgramExerciseView? original;
+    for (final v in planned) {
+      if (v.pe.id == slot.programExerciseId) original = v;
+    }
+    if (original == null) return;
     final restored = PlannedExercise.fromView(
       original,
       variants: await _programDao.listVariants(original.pe.id),
+    );
+    await _workoutDao.deleteOverride(
+      sessionId: current.sessionId,
+      programExerciseId: slot.programExerciseId,
     );
     final newQueue = [...current.queue]..[queueIdx] = restored;
     final next = current.copyWith(queue: newQueue);

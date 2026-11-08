@@ -494,6 +494,29 @@ void main() {
       expect(identical(session(c), before), isTrue);
     });
 
+    // Review #5: the override used to be deleted before the plan lookup threw
+    // a StateError, leaving the DB and memory out of sync.
+    test('a revert whose slot was deleted mid-workout changes nothing',
+        () async {
+      final c = await started();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.substituteExercise(
+        queueIdx: 0,
+        exerciseName: 'Cable Press',
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 30,
+      );
+      await ProgramDao(db).deleteProgramExercise(slotId);
+      final before = session(c);
+      await ctrl.revertSubstitution(0); // no StateError
+      expect(identical(session(c), before), isTrue, reason: 'memory as is');
+      final o = await WorkoutDao(db).overridesForSession(before.sessionId);
+      expect(o.single.exerciseName, 'Cable Press', reason: 'DB as is');
+      expect(session(c).queue.first.exerciseName, 'Cable Press');
+    });
+
     test('a revert to plan keeps the slot\'s variants', () async {
       final c = await started();
       final ctrl = c.read(activeSessionProvider.notifier);
