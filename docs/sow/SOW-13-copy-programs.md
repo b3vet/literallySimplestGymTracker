@@ -1,6 +1,6 @@
 # SOW-13 — Copy a program or a day
 
-> **Status:** 🟦 In progress (1.5.0) · **Phase:** 1 · **Tier:** Free
+> **Status:** 🟦 Built (1.5.0+13) — simtest QA pending · **Phase:** 1 · **Tier:** Free
 > **Owner:** berke · **Est. size:** S
 > **Strategic rationale:** a lifter who wants to try a variation of a working program today has to rebuild it by hand, exercise by exercise. One-tap copy keeps the "minimal, fast" promise ([01-strategy-and-positioning.md](../01-strategy-and-positioning.md)) for program editing, not just logging.
 
@@ -63,3 +63,9 @@ An *active* session can be detached too (the editor is reachable mid-workout). T
 
 ## 10. Definition of done
 Analyze clean, tests green, simtest CP-01…CP-06 pass. Mark SOW-13 in [02-roadmap.md](../02-roadmap.md).
+
+## 11. Build notes (deviations from the 2026-11-08 plan)
+- **Commit order.** The SOW-13 steps (duplicate DAO, entry points) were committed *before* the v7 schema and variant DAO, so `docs → shared schema helper → duplicate → entry points` is a schema-free prefix that ships on its own. Variant copying was added to `_copySlots` together with the variant DAO (SOW-14).
+- **H5 lives in the "shared schema helper" commit**, as the plan's characterization test turned into a passing test: the plan's suspicion (A5) was confirmed — the old delete threw `FOREIGN KEY constraint failed`.
+- **Detached active session.** Not in the plan: an active workout whose day is deleted would otherwise block every new workout after a relaunch. Smallest fix: complete it on resume if it has sets, else abandon (§5).
+- **Day copy position** uses `MAX(position) + 1`, not the row count `createDay` uses, because deleting a day leaves gaps.

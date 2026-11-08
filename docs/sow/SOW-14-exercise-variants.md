@@ -1,6 +1,6 @@
 # SOW-14 — Exercise variants on a program slot
 
-> **Status:** 🟦 In progress (1.5.0) · **Phase:** 1 · **Tier:** Free
+> **Status:** 🟦 Built (1.5.0+13) — simtest QA pending · **Phase:** 1 · **Tier:** Free
 > **Owner:** berke · **Est. size:** L
 > **Strategic rationale:** "the smith machine is taken" is the most common mid-workout edit. Today it means retyping the swap and guessing the weight every time. Pre-planned variants make it two taps and keep the numbers honest, which supports the speed claim in [01-strategy-and-positioning.md](../01-strategy-and-positioning.md).
 
@@ -116,3 +116,12 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 
 ## 10. Definition of done
 Analyze clean, tests green, simtest VAR-01…VAR-12 + REG-01…REG-07 pass. Mark SOW-14 in [02-roadmap.md](../02-roadmap.md); v7 taken (SOW-08/-09/-10 move to v8+).
+
+## 11. Build notes (deviations from the 2026-11-08 plan)
+- **Menu, not chip row (DEC-0007).** Plan step E9 ("variant chip row") became "variant entry in the edit menu": `ExerciseOption.switchVariant` + `showVariantPickerSheet` in `exercise_options_sheet.dart`, wired in `swap_exercise_button.dart`. QA steps VAR-03 / VAR-04 / VAR-12 are rewritten for it in §8.
+- **No `planTargetSets` field.** "Back to the base drops the override" compares against the fresh plan row instead (sets *and* reps *and* drop count), which also catches a rep edit made earlier with "Change exercise".
+- **"Another slot's base on the same day" is rejected in the DAO** (`VariantConflictReason.baseOfAnotherSlot`), not only in the UI, so attribution can never be ambiguous.
+- **Attribution also follows `previous_exercise_id`**, so bar → machine → bar still attributes the machine sets to the slot's variant; inserted override rows never count as swaps.
+- **`summary_apply_state_test` :112-127 is unchanged.** Its "Cable Fly" is logged with no override row, i.e. it is an *added* exercise and correctly stays ADD; the H3 path is covered by a new seed that really swaps via an override.
+- **H4 is summary-only**, as planned: History detail and its share card still read the raw `PrDetector`, so a first exposure can show PR there.
+- **Commit order:** the v7 migration and variant DAO were committed after SOW-13's commits (see SOW-13 §11).

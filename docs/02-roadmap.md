@@ -24,7 +24,7 @@ These are done; do **not** re-spec them. They are the foundation the roadmap bui
 
 | SOW | Feature | Phase | Tier | Status |
 |---|---|---|---|---|
-| [SOW-01](sow/SOW-01-plate-calculator.md) | Plate calculator (phone + watch) | 0 — Existential | Free | 🟦 Built — phone analyze+tests green; watch logic verified, pending Xcode build |
+| [SOW-01](sow/SOW-01-plate-calculator.md) | Plate calculator (phone + watch) | 0 — Existential | Free | ⏸ Removed in 1.4.1 (`1700789`) — the readout can't know which lifts use a bar, so it was wrong more often than right; not coming back (Berke) |
 | [SOW-02](sow/SOW-02-data-export.md) | Data export (CSV/JSON) + native share bridge | 0 — Existential | Free | 🟦 Built — analyze+tests green (import-ready JSON: stable set/exercise/program ids); native `ls/share` (`ShareHandler.swift`) pending Xcode build |
 | [SOW-02b](sow/SOW-02b-workout-summary-share.md) | Workout-summary share to friends (text + image card) | 0 — Existential | Free | 🟦 Built — analyze+tests green; share entry on post-workout **and** history detail; card overflow-tested at 1080×1350; pending Xcode build |
 | [SOW-03](sow/SOW-03-logging-speed-and-rest-reliability.md) | Logging-speed audit + rest-timer survives app-switch/lock | 0 — Existential | Free | 🟦 Built — analyze+tests green (+12: rest force-kill persistence, finish/abandon-clears, sheet prefill); 1-tap repeat-last-set chip + last-set prefill (phone + watch); rest restored at launch, banner on RESUME tap (§4c no-new-UI); force-kill/Live-Activity device matrix (§8 M1–M11) + watch Swift pending hardware |
@@ -36,12 +36,12 @@ These are done; do **not** re-spec them. They are the foundation the roadmap bui
 | [SOW-09](sow/SOW-09-hrv-readiness.md) | HRV readiness modifier | 3 — Surpass | Paid | ⬜ Not started |
 | [SOW-10](sow/SOW-10-advanced-analytics.md) | Advanced analytics & trends | 3 — Surpass | Paid | ⬜ Not started |
 | [SOW-12](sow/SOW-12-data-import.md) | Data import / restore (JSON round-trip) | 0/1 — Trust | Free | ⬜ Not started (committed next block) |
-| [SOW-13](sow/SOW-13-copy-programs.md) | Copy a program or a day (+ delete keeps logged workouts) | 1 — Trust/Table-stakes | Free | 🟦 In progress (1.5.0) |
-| [SOW-14](sow/SOW-14-exercise-variants.md) | Exercise variants on a program slot (DB v7) | 1 — Trust/Table-stakes | Free | 🟦 In progress (1.5.0) |
+| [SOW-13](sow/SOW-13-copy-programs.md) | Copy a program or a day (+ delete keeps logged workouts) | 1 — Trust/Table-stakes | Free | 🟦 Built (1.5.0+13) — analyze+tests green; simtest QA (plan §F CP-01…06) pending |
+| [SOW-14](sow/SOW-14-exercise-variants.md) | Exercise variants on a program slot (DB v7) | 1 — Trust/Table-stakes | Free | 🟦 Built (1.5.0+13) — analyze+tests green; switch lives in the tune (exercise-options) menu; simtest QA (MIG/VAR/REG) pending |
 
 ## Phase 0 — Existential (pre-launch, weeks, cheap)
 **Goal:** be undeniably credible and undeniably free on day one. Nothing here is optional.
-- **SOW-01 Plate calculator** — the single day-1 credibility gap; used at the rack; free; also on the watch.
+- ~~**SOW-01 Plate calculator**~~ — built, then removed in 1.4.1 (see the board).
 - **SOW-02 Data export** — unlimited free core + full-history CSV/JSON export confirmed live at launch. The trust floor.
 - **SOW-03 Logging speed + rest-timer reliability** — sub-3-tap logging audited in real gym conditions; the Live Activity rest timer must survive app-switch and lock (the #3 universal complaint).
 - **Gate:** do not advance until logging speed + plate calculator are demonstrably best-in-class. If the crown adds friction, the whole speed claim collapses.

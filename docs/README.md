@@ -29,4 +29,4 @@ This folder is the **single source of truth** for LS Gym Track's strategy, roadm
 
 ## Provenance
 - Source: competitive & market analysis of 15 rivals, June 2026 — full report at [competitive-analysis-full-report.md](competitive-analysis-full-report.md).
-- Codebase facts in the SOWs were verified against the live repo (DB schema v6, Riverpod tri-layer features, watch app schema v3).
+- Codebase facts in the SOWs were verified against the live repo (DB schema v6 at the time; v7 since 1.5.0 / SOW-14; Riverpod tri-layer features, watch app schema v3).
