@@ -5,6 +5,7 @@ import '../domain/exercise.dart';
 import '../domain/program.dart';
 import '../domain/program_day.dart';
 import '../domain/program_exercise.dart';
+import '../domain/program_exercise_variant.dart';
 
 class ProgramDao {
   ProgramDao(this._db);
@@ -191,9 +192,10 @@ class ProgramDao {
     });
   }
 
-  /// Copy every slot of [fromDayId] into [toDayId] under new ids. Copies the
-  /// raw row (all columns but the ids), so a column added by a later migration
-  /// is carried along without touching this code.
+  /// Copy every slot of [fromDayId] — and each slot's variants — into
+  /// [toDayId] under new ids. Copies raw rows (all columns but the ids), so a
+  /// column added by a later migration is carried along without touching this
+  /// code.
   Future<void> _copySlots(
     Transaction txn, {
     required String fromDayId,
@@ -206,10 +208,25 @@ class ProgramDao {
       orderBy: 'position ASC',
     );
     for (final slot in slots) {
+      final newSlotId = _uuid.v4();
       final row = Map<String, Object?>.of(slot)
-        ..['id'] = _uuid.v4()
+        ..['id'] = newSlotId
         ..['program_day_id'] = toDayId;
       await txn.insert('program_exercises', row);
+      final variants = await txn.query(
+        'program_exercise_variants',
+        where: 'program_exercise_id = ?',
+        whereArgs: [slot['id']],
+        orderBy: 'position ASC',
+      );
+      for (final v in variants) {
+        await txn.insert(
+          'program_exercise_variants',
+          Map<String, Object?>.of(v)
+            ..['id'] = _uuid.v4()
+            ..['program_exercise_id'] = newSlotId,
+        );
+      }
     }
   }
 
@@ -338,13 +355,23 @@ class ProgramDao {
     return pe;
   }
 
+  /// Write a slot. If its (possibly renamed) base exercise is one of the
+  /// slot's own variants, that variant is dropped in the same transaction —
+  /// a slot can't be a variant of itself.
   Future<void> updateProgramExercise(ProgramExercise pe) async {
-    await _db.update(
-      'program_exercises',
-      pe.toRow(),
-      where: 'id = ?',
-      whereArgs: [pe.id],
-    );
+    await _db.transaction((txn) async {
+      await txn.update(
+        'program_exercises',
+        pe.toRow(),
+        where: 'id = ?',
+        whereArgs: [pe.id],
+      );
+      await txn.delete(
+        'program_exercise_variants',
+        where: 'program_exercise_id = ? AND exercise_id = ?',
+        whereArgs: [pe.id, pe.exerciseId],
+      );
+    });
   }
 
   Future<void> deleteProgramExercise(String id) async {
@@ -364,4 +391,154 @@ class ProgramDao {
     }
     await batch.commit(noResult: true);
   }
+
+  // ---------- Variants (SOW-14) ----------
+
+  /// A slot's variants, in order, with their exercise names.
+  Future<List<ProgramExerciseVariantView>> listVariants(
+      String programExerciseId) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT v.*, e.name AS exercise_name
+      FROM program_exercise_variants v
+      JOIN exercises e ON e.id = v.exercise_id
+      WHERE v.program_exercise_id = ?
+      ORDER BY v.position ASC
+      ''',
+      [programExerciseId],
+    );
+    return rows.map(_variantView).toList();
+  }
+
+  /// Every slot's variants on a day, keyed by slot id, each list in order.
+  /// Slots without variants are absent from the map.
+  Future<Map<String, List<ProgramExerciseVariantView>>> listVariantsForDay(
+      String programDayId) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT v.*, e.name AS exercise_name
+      FROM program_exercise_variants v
+      JOIN exercises e ON e.id = v.exercise_id
+      JOIN program_exercises pe ON pe.id = v.program_exercise_id
+      WHERE pe.program_day_id = ?
+      ORDER BY pe.position ASC, v.position ASC
+      ''',
+      [programDayId],
+    );
+    final out = <String, List<ProgramExerciseVariantView>>{};
+    for (final r in rows) {
+      final view = _variantView(r);
+      (out[view.variant.programExerciseId] ??= []).add(view);
+    }
+    return out;
+  }
+
+  /// Add a variant to a slot, last in order. Throws [VariantConflict] when the
+  /// exercise is the slot's base, already a variant of it, or another slot's
+  /// base on the same day.
+  Future<ProgramExerciseVariant> addVariant({
+    required String programExerciseId,
+    required String exerciseName,
+    required double defaultWeightKg,
+    double? weightStepKg,
+  }) async {
+    final exercise = await findOrCreateExercise(exerciseName);
+    return _db.transaction((txn) async {
+      await _checkVariant(txn, programExerciseId, exercise.id, exercise.name);
+      final maxPos = Sqflite.firstIntValue(await txn.rawQuery(
+            'SELECT MAX(position) FROM program_exercise_variants '
+            'WHERE program_exercise_id = ?',
+            [programExerciseId],
+          )) ??
+          -1;
+      final v = ProgramExerciseVariant(
+        id: _uuid.v4(),
+        programExerciseId: programExerciseId,
+        exerciseId: exercise.id,
+        position: maxPos + 1,
+        defaultWeightKg: defaultWeightKg,
+        weightStepKg: weightStepKg,
+      );
+      await txn.insert('program_exercise_variants', v.toRow());
+      return v;
+    });
+  }
+
+  /// Edit a variant from the editor: name (may switch to another exercise),
+  /// weight and step. Same rules as [addVariant].
+  Future<ProgramExerciseVariant> editVariant({
+    required String id,
+    required String exerciseName,
+    required double defaultWeightKg,
+    double? weightStepKg,
+  }) async {
+    final exercise = await findOrCreateExercise(exerciseName);
+    return _db.transaction((txn) async {
+      final rows = await txn.query('program_exercise_variants',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      if (rows.isEmpty) throw StateError('Variant $id not found.');
+      final current = ProgramExerciseVariant.fromRow(rows.first);
+      if (exercise.id != current.exerciseId) {
+        await _checkVariant(
+            txn, current.programExerciseId, exercise.id, exercise.name);
+      }
+      final updated = ProgramExerciseVariant(
+        id: current.id,
+        programExerciseId: current.programExerciseId,
+        exerciseId: exercise.id,
+        position: current.position,
+        defaultWeightKg: defaultWeightKg,
+        weightStepKg: weightStepKg,
+      );
+      await txn.update('program_exercise_variants', updated.toRow(),
+          where: 'id = ?', whereArgs: [id]);
+      return updated;
+    });
+  }
+
+  /// Write a variant row verbatim (summary target raise and its undo).
+  Future<void> updateVariant(ProgramExerciseVariant v) async {
+    await _db.update('program_exercise_variants', v.toRow(),
+        where: 'id = ?', whereArgs: [v.id]);
+  }
+
+  Future<void> deleteVariant(String id) async {
+    await _db.delete('program_exercise_variants',
+        where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> _checkVariant(
+    Transaction txn,
+    String programExerciseId,
+    String exerciseId,
+    String exerciseName,
+  ) async {
+    final slot = await txn.query('program_exercises',
+        where: 'id = ?', whereArgs: [programExerciseId], limit: 1);
+    if (slot.isEmpty) throw StateError('Slot $programExerciseId not found.');
+    if (slot.first['exercise_id'] == exerciseId) {
+      throw VariantConflict(VariantConflictReason.sameAsBase, exerciseName);
+    }
+    final dup = await txn.query('program_exercise_variants',
+        where: 'program_exercise_id = ? AND exercise_id = ?',
+        whereArgs: [programExerciseId, exerciseId],
+        limit: 1);
+    if (dup.isNotEmpty) {
+      throw VariantConflict(VariantConflictReason.duplicate, exerciseName);
+    }
+    final otherBase = await txn.query('program_exercises',
+        where: 'program_day_id = ? AND exercise_id = ? AND id != ?',
+        whereArgs: [slot.first['program_day_id'], exerciseId, programExerciseId],
+        limit: 1);
+    if (otherBase.isNotEmpty) {
+      throw VariantConflict(
+          VariantConflictReason.baseOfAnotherSlot, exerciseName);
+    }
+  }
+
+  ProgramExerciseVariantView _variantView(Map<String, Object?> r) =>
+      ProgramExerciseVariantView(
+        variant: ProgramExerciseVariant.fromRow(r),
+        exerciseName: r['exercise_name'] as String,
+      );
 }

@@ -136,6 +136,81 @@ void main() {
     });
   });
 
+  group('variants (SOW-14)', () {
+    Future<List<Object?>> variantShape(String dayId) async {
+      final out = <Object?>[];
+      final byslot = await dao.listVariantsForDay(dayId);
+      for (final v in await dao.listProgramExercises(dayId)) {
+        for (final x in byslot[v.pe.id] ?? const []) {
+          out.add([
+            v.exerciseName,
+            x.exerciseName,
+            x.variant.exerciseId,
+            x.variant.position,
+            x.variant.defaultWeightKg,
+            x.variant.weightStepKg,
+          ]);
+        }
+      }
+      return out;
+    }
+
+    Future<String> seedWithVariants() async {
+      final programId = await seed();
+      final push = (await dao.listDays(programId)).first;
+      final bench = (await dao.listProgramExercises(push.id)).first;
+      await dao.addVariant(
+        programExerciseId: bench.pe.id,
+        exerciseName: 'Machine Press',
+        defaultWeightKg: 70,
+        weightStepKg: 5,
+      );
+      await dao.addVariant(
+        programExerciseId: bench.pe.id,
+        exerciseName: 'DB Bench',
+        defaultWeightKg: 32,
+      );
+      return programId;
+    }
+
+    test('a program copy carries every variant, independently', () async {
+      final original = await seedWithVariants();
+      final origPush = (await dao.listDays(original)).first;
+      final before = await variantShape(origPush.id);
+      expect(before.length, 2);
+
+      final copy = await dao.duplicateProgram(original, name: 'C');
+      final copyPush = (await dao.listDays(copy.id)).first;
+      expect(await variantShape(copyPush.id), before);
+
+      final copySlot = (await dao.listProgramExercises(copyPush.id)).first;
+      final copyVariants = await dao.listVariants(copySlot.pe.id);
+      final origSlot = (await dao.listProgramExercises(origPush.id)).first;
+      final origVariants = await dao.listVariants(origSlot.pe.id);
+      expect(
+        copyVariants
+            .map((v) => v.variant.id)
+            .toSet()
+            .intersection(origVariants.map((v) => v.variant.id).toSet()),
+        isEmpty,
+        reason: 'variant ids are new',
+      );
+
+      await dao.deleteVariant(copyVariants.first.variant.id);
+      await dao.updateVariant(
+        copyVariants.last.variant.copyWith(defaultWeightKg: 99),
+      );
+      expect(await variantShape(origPush.id), before);
+    });
+
+    test('a day copy carries its variants', () async {
+      final programId = await seedWithVariants();
+      final push = (await dao.listDays(programId)).first;
+      final copy = await dao.duplicateDay(push.id, name: 'Push COPY');
+      expect(await variantShape(copy.id), await variantShape(push.id));
+    });
+  });
+
   group('duplicateDay', () {
     test('appends a deep copy to the same program', () async {
       final programId = await seed();
