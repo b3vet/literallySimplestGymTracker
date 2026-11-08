@@ -353,7 +353,14 @@ class SlotAttribution {
 /// session's override for a slot that holds it as a variant → the first slot
 /// (in day order) holding it as a variant → a slot it was swapped into this
 /// session (override row's exercise or previous exercise; inserted rows never
-/// count — those exercises are "added", not swapped). Pure for tests.
+/// count — those exercises are "added", not swapped) → review #6, the middle
+/// of a swap chain (B → X → Y → Z keeps only Z and Y on the override row, so
+/// X is in no row): every exercise logged this session got there through a
+/// plan slot, a variant, an insert or a "Change exercise", so one that matches
+/// none of them was a swap — attributed to the swapped slot when exactly one
+/// slot was swapped outside its members and no inserted exercise was swapped
+/// (whose own chain could have lost links). Otherwise it stays unattributed
+/// (ADD TO DAY), a documented limitation. Pure for tests.
 Map<String, SlotAttribution> attributeToSlots({
   required List<String> exerciseIds,
   required List<ProgramExerciseView> slots,
@@ -373,6 +380,30 @@ Map<String, SlotAttribution> attributeToSlots({
     for (final o in overrides)
       if (!o.inserted && slotById.containsKey(o.programExerciseId)) o,
   ];
+  // Review #6 fallback (see the doc comment): the one slot swapped outside its
+  // members, if exactly one, and only when no inserted exercise was swapped.
+  bool isMember(String slotId, String? exerciseId) =>
+      exerciseId == null ||
+      slotById[slotId]!.pe.exerciseId == exerciseId ||
+      variantOf(slotId, exerciseId) != null;
+  final swappedSlots = {
+    for (final o in touching)
+      if (!isMember(o.programExerciseId, o.exerciseId) ||
+          !isMember(o.programExerciseId, o.previousExerciseId))
+        o.programExerciseId,
+  };
+  final insertedRows = [for (final o in overrides) if (o.inserted) o];
+  final insertedIds = {
+    for (final o in insertedRows) ...[
+      o.exerciseId,
+      if (o.previousExerciseId != null) o.previousExerciseId!,
+    ],
+  };
+  final chainSlot = swappedSlots.length == 1 &&
+          insertedRows.every((o) => o.previousExerciseId == null)
+      ? slotById[swappedSlots.single]
+      : null;
+
   final out = <String, SlotAttribution>{};
   for (final id in exerciseIds) {
     if (bases.contains(id)) continue;
@@ -401,6 +432,9 @@ Map<String, SlotAttribution> attributeToSlots({
           break;
         }
       }
+    }
+    if (found == null && chainSlot != null && !insertedIds.contains(id)) {
+      found = SlotAttribution(slot: chainSlot);
     }
     if (found != null) out[id] = found;
   }

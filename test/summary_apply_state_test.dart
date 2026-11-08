@@ -577,6 +577,112 @@ void main() {
     });
   });
 
+  // Review #6: B → X → Y → Z with "Change exercise" leaves only Z (exercise)
+  // and Y (previous) on the override row; X used to fall through to ADD TO
+  // DAY instead of SAVE AS VARIANT.
+  group('attributeToSlots: a swap chain', () {
+    late String dayId;
+    late String rowSlot;
+    late String pressSlot;
+    late Map<String, String> ex;
+    late WorkoutDao w;
+    late String sid;
+
+    setUp(() async {
+      final pDao = ProgramDao(db);
+      w = WorkoutDao(db);
+      final p = await pDao.createProgram('Chain');
+      dayId = (await pDao.createDay(p.id, 'D')).id;
+      Future<String> slot(String n) async => (await pDao.addProgramExercise(
+            programDayId: dayId,
+            exerciseName: n,
+            targetSets: 3,
+            targetRepsMin: 8,
+            targetRepsMax: 10,
+            defaultWeightKg: 50,
+          ))
+              .id;
+      rowSlot = await slot('Row');
+      pressSlot = await slot('Press');
+      ex = {
+        for (final n in ['Row', 'Cable Row', 'T-Bar Row', 'Seal Row', 'Curl'])
+          n: (await pDao.findOrCreateExercise(n)).id,
+      };
+      sid = (await w.startSession(dayId)).id;
+      // Row → Cable Row → T-Bar Row → Seal Row: the row keeps the last two.
+      await w.upsertOverride(
+        sessionId: sid,
+        programExerciseId: rowSlot,
+        exerciseId: ex['Seal Row']!,
+        previousExerciseId: ex['T-Bar Row'],
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 50,
+      );
+    });
+
+    Future<Map<String, SlotAttribution>> attribute() async {
+      final pDao = ProgramDao(db);
+      return attributeToSlots(
+        exerciseIds: [ex['Cable Row']!, ex['T-Bar Row']!, ex['Seal Row']!],
+        slots: await pDao.listProgramExercises(dayId),
+        variantsBySlot: await pDao.listVariantsForDay(dayId),
+        overrides: await w.overridesForSession(sid),
+      );
+    }
+
+    test('every link lands on the swapped slot', () async {
+      final a = await attribute();
+      for (final n in ['Cable Row', 'T-Bar Row', 'Seal Row']) {
+        expect(a[ex[n]]?.slot.pe.id, rowSlot, reason: n);
+        expect(a[ex[n]]!.variant, isNull);
+      }
+    });
+
+    test('ambiguous with two swapped slots: the lost link stays ADD',
+        () async {
+      await w.upsertOverride(
+        sessionId: sid,
+        programExerciseId: pressSlot,
+        exerciseId: ex['Curl']!,
+        previousExerciseId: null,
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 50,
+      );
+      final a = await attribute();
+      expect(a[ex['Cable Row']], isNull);
+      expect(a[ex['T-Bar Row']]?.slot.pe.id, rowSlot);
+    });
+
+    test('not when an inserted exercise was swapped too', () async {
+      final id = await w.insertSessionExercise(
+        sessionId: sid,
+        exerciseId: ex['Curl']!,
+        targetSets: 2,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
+        defaultWeightKg: 10,
+        orderPos: 5,
+      );
+      await w.upsertOverride(
+        sessionId: sid,
+        programExerciseId: id,
+        exerciseId: ex['Curl']!,
+        previousExerciseId: ex['Row'],
+        targetSets: 2,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
+        defaultWeightKg: 10,
+        inserted: true,
+        orderPos: 5,
+      );
+      expect((await attribute())[ex['Cable Row']], isNull);
+    });
+  });
+
   group('classifyProgress', () {
     test('heavier wins', () {
       expect(
