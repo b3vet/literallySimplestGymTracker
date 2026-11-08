@@ -57,6 +57,21 @@ class ProgramDao {
     });
   }
 
+  /// Whether the in-progress workout runs on [dayId], or on any day of
+  /// [programId] — the delete confirmation warns that it will end.
+  Future<bool> hasActiveWorkout({String? programId, String? dayId}) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT 1 FROM workout_sessions ws
+      JOIN program_days pd ON pd.id = ws.program_day_id
+      WHERE ws.status = 'active' AND (pd.id = ? OR pd.program_id = ?)
+      LIMIT 1
+      ''',
+      [dayId ?? '', programId ?? ''],
+    );
+    return rows.isNotEmpty;
+  }
+
   Future<Program?> findProgram(String id) async {
     final rows =
         await _db.query('programs', where: 'id = ?', whereArgs: [id], limit: 1);

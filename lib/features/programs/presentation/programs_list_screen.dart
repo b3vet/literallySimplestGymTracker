@@ -9,6 +9,7 @@ import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program.dart';
+import 'program_delete.dart';
 
 class ProgramsListScreen extends ConsumerWidget {
   const ProgramsListScreen({super.key});
@@ -83,10 +84,16 @@ class _ProgramTile extends ConsumerWidget {
       key: ValueKey(program.id),
       direction: DismissDirection.endToStart,
       background: dismissBackground(),
-      confirmDismiss: (_) async =>
-          await confirmDelete(context, program.name) ?? false,
+      confirmDismiss: (_) => confirmProgramDelete(
+        context,
+        ref,
+        label: program.name,
+        programId: program.id,
+      ),
       onDismissed: (_) async {
+        final container = ProviderScope.containerOf(context, listen: false);
         await ref.read(programDaoProvider).deleteProgram(program.id);
+        await closeWorkoutAfterDelete(container);
         ref.invalidate(programsListProvider);
       },
       child: LsCard(

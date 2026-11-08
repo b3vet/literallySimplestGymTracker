@@ -139,6 +139,22 @@ class LiveActivityController {
 
   Future<void> end() => _enqueue(() => _endLocked());
 
+  /// End every activity this app has on the lock screen, including one left
+  /// by a previous process (whose id this instance never learned) — used when
+  /// a workout is closed for it, e.g. its program was deleted mid-workout.
+  Future<void> endAll() => _enqueue(() async {
+        if (!_supported) return;
+        await _ensureInit();
+        if (!_initialized) return;
+        try {
+          await _plugin.endAllActivities();
+          debugPrint('[LiveActivity] endAllActivities OK');
+        } catch (e) {
+          debugPrint('[LiveActivity] endAllActivities FAILED: $e');
+        }
+        _activityId = null;
+      });
+
   Future<void> _endLocked() async {
     if (!_supported) return;
     if (_activityId == null) return;

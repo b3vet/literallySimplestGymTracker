@@ -87,16 +87,35 @@ Future<String?> promptName(
   );
 }
 
-Future<bool?> confirmDelete(BuildContext context, String label) =>
+/// [warning], when given, is an extra paragraph under the standard line —
+/// e.g. that the workout in progress will end.
+Future<bool?> confirmDelete(
+  BuildContext context,
+  String label, {
+  String? warning,
+}) =>
     showDialog(
       context: context,
       builder: (ctx) {
         final t = LsTheme.of(ctx);
         return AlertDialog(
           title: const Text('DELETE?'),
-          content: Text(
-            'This will delete "$label" and everything inside it.',
-            style: LsType.bodyM.copyWith(color: t.surface.text2),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This will delete "$label" and everything inside it.',
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
+              ),
+              if (warning != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  warning,
+                  style: LsType.bodyM.copyWith(color: LsSignals.danger),
+                ),
+              ],
+            ],
           ),
           actions: [
             TextButton(

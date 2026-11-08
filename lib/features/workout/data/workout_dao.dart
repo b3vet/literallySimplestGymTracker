@@ -40,12 +40,15 @@ class WorkoutDao {
     return rows.isEmpty ? null : WorkoutSession.fromRow(rows.first);
   }
 
-  Future<void> completeSession(String id) async {
+  /// Mark a session completed. [endedAt] defaults to now; a session closed
+  /// after the fact (its program day was deleted mid-workout) passes its last
+  /// set's time so the duration stays honest.
+  Future<void> completeSession(String id, {DateTime? endedAt}) async {
     await _db.update(
       'workout_sessions',
       {
         'status': SessionStatus.completed.name,
-        'ended_at': DateTime.now().millisecondsSinceEpoch,
+        'ended_at': (endedAt ?? DateTime.now()).millisecondsSinceEpoch,
       },
       where: 'id = ?',
       whereArgs: [id],

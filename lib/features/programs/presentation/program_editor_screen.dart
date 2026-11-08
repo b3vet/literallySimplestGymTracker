@@ -11,6 +11,7 @@ import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program_day.dart';
+import 'program_delete.dart';
 
 class ProgramEditorScreen extends ConsumerStatefulWidget {
   const ProgramEditorScreen({super.key, required this.programId});
@@ -296,10 +297,16 @@ class _DayTile extends ConsumerWidget {
       key: ValueKey('dismiss-${day.id}'),
       direction: editing ? DismissDirection.endToStart : DismissDirection.none,
       background: dismissBackground(),
-      confirmDismiss: (_) async =>
-          await confirmDelete(context, day.name) ?? false,
+      confirmDismiss: (_) => confirmProgramDelete(
+        context,
+        ref,
+        label: day.name,
+        dayId: day.id,
+      ),
       onDismissed: (_) async {
+        final container = ProviderScope.containerOf(context, listen: false);
         await ref.read(programDaoProvider).deleteDay(day.id);
+        await closeWorkoutAfterDelete(container);
         ref.invalidate(programDaysProvider(programId));
       },
       child: card,

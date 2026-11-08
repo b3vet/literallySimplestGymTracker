@@ -12,6 +12,7 @@ import '../../programs/domain/program_exercise_variant.dart';
 import '../data/workout_dao.dart';
 import '../domain/active_session.dart';
 import '../domain/session_exercise_override.dart';
+import '../domain/workout_session.dart';
 import '../domain/workout_set.dart';
 import 'live_activity_controller.dart';
 import 'pr_detector.dart';
@@ -197,15 +198,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     if (session == null) return null;
     if (session.programDayId == null) {
       // Its program/day was deleted mid-workout (the delete detaches sessions
-      // rather than failing). There is no plan to rebuild a queue from, and
-      // leaving it `active` would block every new workout. Keep whatever was
-      // logged — complete it so the sets stay in History — else drop it.
-      final sets = await _workoutDao.setsForSession(session.id);
-      if (sets.isEmpty) {
-        await _workoutDao.abandonSession(session.id);
-      } else {
-        await _workoutDao.completeSession(session.id);
-      }
+      // rather than failing) and the app was killed before the delete could
+      // close it (see [closeIfDetached]).
+      await _closeDetached(session.id);
       return null;
     }
 
@@ -238,6 +233,44 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       );
     }
     return resumed;
+  }
+
+  /// Close a session whose program day is gone. There is no plan to rebuild a
+  /// queue from, and leaving it `active` would block every new workout. Keep
+  /// whatever was logged — complete it, ended at its last set (not "now", so
+  /// the duration stays honest), so the sets stay in History — else drop it.
+  /// Then tear down like [finish]: rest timer and Live Activity (all of them —
+  /// on a cold start the activity belongs to the previous process).
+  Future<void> _closeDetached(String sessionId) async {
+    final sets = await _workoutDao.setsForSession(sessionId);
+    if (sets.isEmpty) {
+      await _workoutDao.abandonSession(sessionId);
+    } else {
+      var last = sets.first.loggedAt;
+      for (final s in sets) {
+        if (s.loggedAt.isAfter(last)) last = s.loggedAt;
+      }
+      await _workoutDao.completeSession(sessionId, endedAt: last);
+    }
+    ref.read(restTimerProvider.notifier).dismiss();
+    await _liveActivity.endAll();
+  }
+
+  /// After a program or day delete: if the running workout lost its day,
+  /// close it now (same rule as on resume) instead of offering RESUME until
+  /// the next cold start. Returns whether it closed one.
+  Future<bool> closeIfDetached() async {
+    final current = state.value;
+    if (current == null) return false;
+    final session = await _workoutDao.findSession(current.sessionId);
+    if (session == null ||
+        session.status != SessionStatus.active ||
+        session.programDayId != null) {
+      return false;
+    }
+    state = const AsyncValue.data(null);
+    await _closeDetached(session.id);
+    return true;
   }
 
   /// Start a new session for the given program day. Fails if there's already an active session.
