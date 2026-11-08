@@ -118,12 +118,37 @@ void main() {
       );
     });
 
-    test('never below one set', () {
+    // Review #2: the old floor of 1 added a set on every round trip of a
+    // complete slot (plan 3, all done → machine 1 → bar 4).
+    test('a complete slot moves nothing over, and a round trip keeps 3', () {
+      final done = sets({'bar': 3});
+      final toMachine =
+          carryOverTargetSets(slot(on: 'bar', target: 3), 'machine', done);
+      expect(toMachine, 0);
+      final back = carryOverTargetSets(
+        slot(on: 'machine', target: toMachine),
+        'bar',
+        done,
+      );
+      expect(back, 3);
+      // …and again: no drift.
       expect(
         carryOverTargetSets(
-          slot(on: 'bar', target: 1),
+          slot(on: 'bar', target: back),
+          'db',
+          done,
+        ),
+        0,
+      );
+    });
+
+    test('over target on the current member: keep what the new one has', () {
+      // 4 logged on a 3-set bar, 1 on the machine from earlier.
+      expect(
+        carryOverTargetSets(
+          slot(on: 'bar', target: 3),
           'machine',
-          sets({'bar': 1}),
+          sets({'bar': 4, 'machine': 1}),
         ),
         1,
       );
@@ -376,6 +401,27 @@ void main() {
         expect(slot.defaultWeightKg, 60);
       },
     );
+
+    test('a complete slot ignores the switch: plan 3, all done, round trip',
+        () async {
+      final c = await started();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      for (var i = 0; i < 3; i++) {
+        await log(c, 60);
+      }
+      expect(session(c).cursor.exerciseIdx, 1);
+      await ctrl.goToExerciseIndex(0); // go back to the finished slot
+      await ctrl.switchVariant(0, machineId);
+      await ctrl.switchVariant(0, barId);
+      final slot = session(c).queue.first;
+      expect(slot.exerciseId, barId);
+      expect(slot.targetSets, 3, reason: 'still 3 total, no inflation');
+      expect(slot.isOverridden, isFalse);
+      expect(
+        await WorkoutDao(db).overridesForSession(session(c).sessionId),
+        isEmpty,
+      );
+    });
 
     test('ignores slots without variants and unknown exercises', () async {
       final c = await started();

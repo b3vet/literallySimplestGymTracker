@@ -135,6 +135,11 @@ class PlannedExercise {
     ];
   }
 
+  /// True when every target set of the exercise the slot runs as now is
+  /// logged — the same test the cursor uses ([completedSetsFor]).
+  bool isCompleteIn(List<WorkoutSet> logged) =>
+      completedSetsFor(logged, exerciseId) >= targetSets;
+
   /// The member currently running, or null (no variants, or swapped to an
   /// exercise outside the slot with "Change exercise").
   SlotVariant? get activeMember {

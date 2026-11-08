@@ -30,6 +30,7 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
   required PlannedExercise exercise,
   required bool canAddSet,
   required bool canRemoveSet,
+  bool canSwitchVariant = true,
 }) {
   return showModalBottomSheet<ExerciseOption>(
     context: context,
@@ -40,6 +41,7 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
         exercise: exercise,
         canAddSet: canAddSet,
         canRemoveSet: canRemoveSet,
+        canSwitchVariant: canSwitchVariant,
       ),
     ),
   );
@@ -50,11 +52,16 @@ class _ExerciseOptionsSheet extends StatelessWidget {
     required this.exercise,
     required this.canAddSet,
     required this.canRemoveSet,
+    required this.canSwitchVariant,
   });
 
   final PlannedExercise exercise;
   final bool canAddSet;
   final bool canRemoveSet;
+
+  /// False once the slot's sets are all logged: there is nothing left to
+  /// carry over (SOW-14, review #2).
+  final bool canSwitchVariant;
 
   @override
   Widget build(BuildContext context) {
@@ -89,8 +96,12 @@ class _ExerciseOptionsSheet extends StatelessWidget {
           _OptionRow(
             icon: Icons.alt_route,
             label: 'Switch variant',
-            subtitle: 'Now: ${exercise.exerciseName}',
-            onTap: () => Navigator.pop(context, ExerciseOption.switchVariant),
+            subtitle: canSwitchVariant
+                ? 'Now: ${exercise.exerciseName}'
+                : 'All sets done on ${exercise.exerciseName}',
+            onTap: canSwitchVariant
+                ? () => Navigator.pop(context, ExerciseOption.switchVariant)
+                : null,
           ),
         ],
         const SizedBox(height: LsGap.sub),

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/core/theme/app_theme.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
 import 'package:ls_workout_tracker/features/workout/domain/active_session.dart';
+import 'package:ls_workout_tracker/features/workout/domain/workout_set.dart';
 import 'package:ls_workout_tracker/features/workout/presentation/swap_exercise_button.dart';
 import 'package:ls_workout_tracker/main.dart' show sharedPreferencesProvider;
 import 'package:shared_preferences/shared_preferences.dart';
@@ -69,7 +70,11 @@ PlannedExercise _slot({
 void main() {
   late _FakeController fake;
 
-  Future<void> pump(WidgetTester tester, PlannedExercise slot) async {
+  Future<void> pump(
+    WidgetTester tester,
+    PlannedExercise slot, {
+    List<WorkoutSet> logged = const [],
+  }) async {
     SharedPreferences.setMockInitialValues({'settings.unit': 'kg'});
     final prefs = await SharedPreferences.getInstance();
     fake = _FakeController(
@@ -79,7 +84,7 @@ void main() {
         startedAt: DateTime(2026),
         queue: [slot],
         cursor: const Cursor(exerciseIdx: 0, setIdx: 0),
-        loggedSets: const [],
+        loggedSets: logged,
       ),
     );
     tester.view.physicalSize = const Size(1170, 2532);
@@ -189,6 +194,34 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('variant-row-bar')));
     await tester.pumpAndSettle();
+    expect(fake.calls, isEmpty);
+  });
+
+  // Review #2: on a slot whose sets are all logged, the switch is shown but
+  // disabled — there is nothing left to carry over.
+  testWidgets('disabled once the slot is complete', (tester) async {
+    await pump(
+      tester,
+      _slot(),
+      logged: [
+        for (var i = 0; i < 3; i++)
+          WorkoutSet(
+            id: 's$i',
+            sessionId: 's',
+            exerciseId: 'bar',
+            setIndex: i,
+            reps: 8,
+            weightKg: 60,
+            rir: 1,
+            loggedAt: DateTime(2026),
+          ),
+      ],
+    );
+    expect(find.text('SWITCH VARIANT'), findsOneWidget);
+    expect(find.text('ALL SETS DONE ON SHOULDER PRESS'), findsOneWidget);
+    await tester.tap(find.text('SWITCH VARIANT'));
+    await tester.pumpAndSettle();
+    expect(find.text('REMAINING SETS CARRY OVER'), findsNothing);
     expect(fake.calls, isEmpty);
   });
 }

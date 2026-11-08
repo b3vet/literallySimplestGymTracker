@@ -9,6 +9,7 @@ import '../../../core/theme/spec.dart';
 import '../../programs/presentation/exercise_edit_sheet.dart';
 import '../application/active_workout_controller.dart';
 import '../domain/active_session.dart';
+import '../domain/workout_set.dart';
 import 'exercise_options_sheet.dart';
 
 /// Topbar-style button in the leading slot of the active workout header. Sized
@@ -33,12 +34,15 @@ class SwapExerciseButton extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final overridden = exercise.isOverridden;
+    final logged = ref.watch(
+      activeSessionProvider.select((s) => s.value?.loggedSets),
+    );
     return Material(
       color: overridden ? t.accent.accentDim : t.surface.surface,
       borderRadius: BorderRadius.circular(LsRadius.r3),
       child: InkWell(
         borderRadius: BorderRadius.circular(LsRadius.r3),
-        onTap: () => _openOptions(context, ref),
+        onTap: () => _openOptions(context, ref, logged ?? const []),
         child: Container(
           width: LsBox.topbarIcon,
           height: LsBox.topbarIcon,
@@ -60,13 +64,18 @@ class SwapExerciseButton extends ConsumerWidget {
     );
   }
 
-  Future<void> _openOptions(BuildContext context, WidgetRef ref) async {
+  Future<void> _openOptions(
+    BuildContext context,
+    WidgetRef ref,
+    List<WorkoutSet> logged,
+  ) async {
     final notifier = ref.read(activeSessionProvider.notifier);
     final option = await showExerciseOptionsSheet(
       context,
       exercise: exercise,
       canAddSet: exercise.targetSets < kMaxTargetSets,
       canRemoveSet: exercise.targetSets > 1,
+      canSwitchVariant: !exercise.isCompleteIn(logged),
     );
     if (option == null || !context.mounted) return;
 

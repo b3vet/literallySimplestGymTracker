@@ -65,8 +65,14 @@ Cursor cursorAfter(List<PlannedExercise> queue, List<WorkoutSet> loggedSets) {
 /// The slot's total is its current target plus every set already done on the
 /// OTHER members; the new member's target is that total minus what was done on
 /// every member except itself. Plan 3, 1 done on the machine, switch to the
-/// bar → bar target 2. Floors at 1 so a switch always leaves a set to log.
-/// Completed sets count distinct groups, so a drop set counts once.
+/// bar → bar target 2. Completed sets count distinct groups, so a drop set
+/// counts once.
+///
+/// A slot that is already complete moves NO pending set over: the new member's
+/// target is just what it already has (possibly 0). There is no floor of 1 —
+/// a floor would add a set on every round trip (review #2: plan 3, all done,
+/// away and back → 4). The menu also disables the switch on a complete slot
+/// and [ActiveWorkoutController.switchVariant] ignores it.
 int carryOverTargetSets(
   PlannedExercise slot,
   String toExerciseId,
@@ -85,7 +91,10 @@ int carryOverTargetSets(
     if (m != toExerciseId) doneElsewhere += done;
   }
   final target = total - doneElsewhere;
-  return target < 1 ? 1 : target;
+  // Below what's done on the new member only when the current one is over its
+  // target: keep the logged sets, add nothing.
+  final doneOnNew = completedSetsFor(logged, toExerciseId);
+  return target < doneOnNew ? doneOnNew : target;
 }
 
 /// Fractional queue `position` that places a newly inserted exercise
@@ -862,6 +871,8 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     if (!slot.hasVariants || slot.skipped || exerciseId == slot.exerciseId) {
       return;
     }
+    // A complete slot has nothing left to carry over (review #2).
+    if (slot.isCompleteIn(current.loggedSets)) return;
     SlotVariant? member;
     for (final m in slot.members) {
       if (m.exerciseId == exerciseId) member = m;
