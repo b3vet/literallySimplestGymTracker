@@ -11,11 +11,17 @@ class ExercisePR {
     required this.kind,
     required this.weightKg,
     required this.reps,
+    this.isFirstExposure = false,
   });
   final String exerciseId;
   final PrKind kind;
   final double weightKg;
   final int reps;
+
+  /// True when the exercise had never been logged before this session. With
+  /// no history to beat, [kind] is always [PrKind.weight] — a record by
+  /// definition, not by effort. The summary shows FIRST TIME instead (H4).
+  final bool isFirstExposure;
 
   bool get isPr => kind != PrKind.none;
 }
@@ -69,6 +75,7 @@ class PrDetector {
         kind: kind,
         weightKg: topWeight,
         reps: topReps,
+        isFirstExposure: historicalMaxWeight == null,
       );
     }
     return out;

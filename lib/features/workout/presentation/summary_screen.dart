@@ -1127,6 +1127,7 @@ class _LiftCard extends ConsumerWidget {
       container: true,
       button: true,
       label: '${e.name}.${e.isPr ? ' Personal record.' : ''}'
+          '${e.isFirstExposure ? ' First time.' : ''}'
           '${e.isVariant ? ' Variant of ${e.variantOfName}.' : ''} '
           '$top, ${e.setCount} sets. ${delta.semantics}',
       hint: expanded ? 'Double tap to hide sets.' : 'Double tap to show sets.',
@@ -1177,6 +1178,11 @@ class _LiftCard extends ConsumerWidget {
                             if (e.isPr) ...[
                               const SizedBox(width: 8),
                               const _PrChip(),
+                            ] else if (e.isFirstExposure) ...[
+                              const SizedBox(width: 8),
+                              Text('FIRST TIME',
+                                  style: LsType.monoMeta
+                                      .copyWith(color: t.accent.accent)),
                             ] else if (!e.inPlan) ...[
                               const SizedBox(width: 8),
                               Text('NOT IN PLAN',

@@ -1,6 +1,9 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
+import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart'
+    show sessionPrsProvider;
+import 'package:ls_workout_tracker/features/workout/application/pr_detector.dart';
 import 'package:ls_workout_tracker/features/workout/application/summary_controller.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:ls_workout_tracker/main.dart' show databaseProvider;
@@ -417,6 +420,54 @@ void main() {
       expect((await pDao.listVariants(pressSlotId)).length, 2,
           reason: 'other variants untouched');
       expect(kindOf(await vUpdates(), 'cable').createdVariantId, isNull);
+    });
+
+    test('H4: first exposure reads FIRST TIME, not a PR', () async {
+      final prs = await container.read(sessionPrsProvider(vSessionId).future);
+      expect(prs[ex['press']]!.isFirstExposure, isTrue,
+          reason: 'never logged before today');
+      expect(prs[ex['press']]!.kind, PrKind.weight,
+          reason: 'the detector itself is unchanged (dao_test still holds)');
+      expect(prs[ex['machine']]!.isFirstExposure, isFalse);
+
+      final s = await container.read(sessionSummaryProvider(vSessionId).future);
+      final press = s!.exercises.singleWhere((e) => e.exerciseId == ex['press']);
+      expect(press.pr, isNull);
+      expect(press.isPr, isFalse);
+      expect(press.isFirstExposure, isTrue);
+      final machine =
+          s.exercises.singleWhere((e) => e.exerciseId == ex['machine']);
+      expect(machine.isPr, isTrue, reason: '45 beats its earlier 40');
+      expect(machine.isFirstExposure, isFalse);
+      expect(s.prCount, 2,
+          reason: 'machine 45 > 40 and cable 55 > 50; press is not counted');
+    });
+
+    test('H4: a first exposure still offers a raise when it beats the target',
+        () async {
+      // Press: first time today, 62.5 > 60 target.
+      expect(kindOf(await vUpdates(), 'press').kind, ProgramUpdateKind.raise);
+    });
+
+    test('H4: a first exposure under its target offers nothing', () async {
+      // A new variant with no history, logged under its target: before H4
+      // the guaranteed weight PR would have offered a raise.
+      final pDao = ProgramDao(db);
+      final wDao = WorkoutDao(db);
+      final band = await pDao.addVariant(
+        programExerciseId: pressSlotId,
+        exerciseName: 'Band Press',
+        defaultWeightKg: 30,
+      );
+      final s = await wDao.startSession(vDayId);
+      await logSets(wDao, s.id, band.exerciseId, 20);
+      await wDao.completeSession(s.id);
+      final list =
+          await container.read(programUpdatesProvider(s.id).future);
+      expect(list.where((u) => u.exerciseId == band.exerciseId), isEmpty);
+      final summary = await container.read(sessionSummaryProvider(s.id).future);
+      expect(summary!.exercises.single.isFirstExposure, isTrue);
+      expect(summary.exercises.single.pr, isNull);
     });
 
     test('applyAll / undoAll count the new kinds', () async {

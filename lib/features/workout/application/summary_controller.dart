@@ -66,6 +66,7 @@ class ExerciseSummary {
     this.variantOfName,
     this.substituteSlotPe,
     this.substituteSlotName,
+    this.isFirstExposure = false,
   });
 
   final String exerciseId;
@@ -102,6 +103,11 @@ class ExerciseSummary {
   /// offers to save it as a variant of that slot.
   final ProgramExercise? substituteSlotPe;
   final String? substituteSlotName;
+
+  /// H4: the exercise's first-ever session (outside the first-ever workout,
+  /// which has its own baseline treatment). [pr] is null; the card reads
+  /// FIRST TIME instead of a guaranteed, meaningless weight PR.
+  final bool isFirstExposure;
 
   int get setCount => setGroups.length;
   bool get isPr => pr != null && pr!.isPr;
@@ -297,7 +303,10 @@ final sessionSummaryProvider =
               prevTopWeightKg: prevTop,
               prevTopReps: prevReps,
             ),
-      pr: isFirstEver ? null : prs[id],
+      // H4: a first exposure is a PR by definition — suppress it, as the
+      // first-ever session already does.
+      pr: isFirstEver || (prs[id]?.isFirstExposure ?? false) ? null : prs[id],
+      isFirstExposure: !isFirstEver && (prs[id]?.isFirstExposure ?? false),
       planPe: planByExercise[id],
       planVariant: attribution[id]?.variant,
       variantSlotPe: attribution[id]?.variant == null
