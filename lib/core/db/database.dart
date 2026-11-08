@@ -8,7 +8,7 @@ const _dbFileName = 'simple_gym.db';
 
 /// Current schema version. Exposed so tests open their in-memory databases at
 /// exactly the version the app ships.
-const kDbVersion = 6;
+const kDbVersion = 7;
 
 /// Schema steps in order. Index 0 is the v1 base schema; index N is the step
 /// that takes a database from v(N) to v(N+1).
@@ -19,6 +19,7 @@ const _steps = <List<String>>[
   schemaV4Up,
   schemaV5Up,
   schemaV6Up,
+  schemaV7Up,
 ];
 
 Future<Database> openAppDatabase() async {

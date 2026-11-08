@@ -149,3 +149,30 @@ const schemaV6Up = <String>[
   'ALTER TABLE workout_sets ADD COLUMN set_group TEXT',
   'ALTER TABLE workout_sets ADD COLUMN group_seq INTEGER NOT NULL DEFAULT 0',
 ];
+
+/// v7 (SOW-14): exercise variants on a program slot. A slot keeps its base
+/// exercise (`program_exercises.exercise_id`) and may hold 0..N variants —
+/// ordinary `exercises` rows, each with its OWN target weight and step; sets,
+/// reps and drop count stay on the slot. No backfill: existing slots simply
+/// have no variants.
+///
+/// **Must stay idempotent.** sqflite has no downgrade hook here and silently
+/// rewrites `user_version` when an older build (1.4.1, v6) opens this file, so
+/// the next 1.5.0 launch runs this step again against a table that already
+/// exists. Hence `IF NOT EXISTS` on both statements and no `ALTER TABLE`.
+const schemaV7Up = <String>[
+  '''
+  CREATE TABLE IF NOT EXISTS program_exercise_variants (
+    id TEXT PRIMARY KEY,
+    program_exercise_id TEXT NOT NULL
+      REFERENCES program_exercises(id) ON DELETE CASCADE,
+    exercise_id TEXT NOT NULL REFERENCES exercises(id),
+    position INTEGER NOT NULL,
+    default_weight REAL NOT NULL,
+    weight_step REAL,
+    UNIQUE (program_exercise_id, exercise_id)
+  )
+  ''',
+  'CREATE INDEX IF NOT EXISTS idx_pev_pe '
+      'ON program_exercise_variants(program_exercise_id, position)',
+];
