@@ -49,6 +49,13 @@ final dayExercisesProvider =
   return ref.watch(programDaoProvider).listProgramExercises(dayId);
 });
 
+/// One program slot (its own row, no name) — the variants sheet resolves each
+/// variant's inherited prescription on it.
+final programExerciseProvider =
+    FutureProvider.family<ProgramExercise?, String>((ref, id) {
+  return ref.watch(programDaoProvider).findProgramExercise(id);
+});
+
 /// One slot's variants, in order (SOW-14).
 final slotVariantsProvider = FutureProvider.family<
     List<ProgramExerciseVariantView>, String>((ref, programExerciseId) {

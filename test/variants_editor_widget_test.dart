@@ -34,7 +34,11 @@ void main() {
     await tester.pump(const Duration(milliseconds: 400));
   }
 
-  Future<void> seed(WidgetTester tester, {bool withVariant = false}) async {
+  Future<void> seed(
+    WidgetTester tester, {
+    bool withVariant = false,
+    bool withOwnPrescription = false,
+  }) async {
     await tester.runAsync(() async {
       db = await openTestDb();
       dao = ProgramDao(db);
@@ -54,6 +58,18 @@ void main() {
           programExerciseId: pe.id,
           exerciseName: 'Shoulder Press (Machine)',
           defaultWeightKg: 40,
+        );
+      }
+      if (withOwnPrescription) {
+        await dao.addVariant(
+          programExerciseId: pe.id,
+          exerciseName: 'Shoulder Press (Smith)',
+          defaultWeightKg: 45,
+          weightStepKg: 2.5,
+          targetSets: 4,
+          targetRepsMin: 6,
+          targetRepsMax: 8,
+          dropCount: 1,
         );
       }
     });
@@ -113,7 +129,8 @@ void main() {
     await tester.runAsync(() => db.close());
   }
 
-  testWidgets('variantMode shows only name, weight and step', (tester) async {
+  // DEC-0007 #13: a variant is a full exercise prescription.
+  testWidgets('variantMode shows every exercise field', (tester) async {
     await seed(tester);
     await pumpHost(
       tester,
@@ -132,10 +149,15 @@ void main() {
     );
 
     expect(find.text('EDIT VARIANT'), findsOneWidget);
-    expect(find.text('WT'), findsOneWidget);
-    expect(find.text('WEIGHT STEP'), findsOneWidget);
-    for (final hidden in ['SETS', 'REP MIN', 'REP MAX', 'DROP SET']) {
-      expect(find.text(hidden), findsNothing, reason: '$hidden is the slot\'s');
+    for (final shown in [
+      'SETS',
+      'REP MIN',
+      'REP MAX',
+      'WT',
+      'WEIGHT STEP',
+      'DROP SET',
+    ]) {
+      expect(find.text(shown), findsOneWidget, reason: shown);
     }
     expect(
       find.textContaining('VARIANTS ·'),
@@ -224,7 +246,11 @@ void main() {
 
     expect(find.text('VARIANTS'), findsOneWidget);
     expect(find.text('SHOULDER PRESS (MACHINE)'), findsOneWidget);
-    expect(find.text('40 KG'), findsOneWidget);
+    expect(
+      find.text('3×8-10 · 40 KG'),
+      findsOneWidget,
+      reason: 'a build-13 variant shows the slot prescription it inherits',
+    );
 
     await tester.tap(find.text('+ ADD VARIANT'));
     await tester.pumpAndSettle();
@@ -242,6 +268,64 @@ void main() {
       'Shoulder Press (Machine)',
       'Shoulder Press (DB)',
     ]);
+    final added = list.last.variant;
+    expect(
+      [
+        added.targetSets,
+        added.targetRepsMin,
+        added.targetRepsMax,
+        added.dropCount,
+      ],
+      [3, 8, 10, 0],
+      reason: 'prefilled from the slot and saved explicitly',
+    );
+    await closeDb(tester);
+  });
+
+  testWidgets('a variant with its own prescription: tile, edit, save', (
+    tester,
+  ) async {
+    await seed(tester, withOwnPrescription: true);
+    await pumpHost(
+      tester,
+      (c) => showVariantsSheet(
+        c,
+        programExerciseId: slotId,
+        baseName: 'Shoulder Press',
+      ),
+    );
+    expect(find.text('4×6-8 · 45 KG'), findsOneWidget);
+    expect(find.text('×1'), findsOneWidget, reason: 'drop pill');
+    expect(find.text('DROP'), findsOneWidget);
+
+    // Edit: the sheet opens on the variant's own values; turn drops off.
+    await tester.tap(find.text('SHOULDER PRESS (SMITH)'));
+    await settleDb(tester);
+    await tester.pumpAndSettle();
+    expect(find.text('EDIT VARIANT'), findsOneWidget);
+    expect(find.text('DROPS'), findsOneWidget, reason: 'drops on (1)');
+    final off = find.text('OFF');
+    await tester.ensureVisible(off);
+    await tester.pumpAndSettle();
+    await tester.tap(off);
+    await tester.pumpAndSettle();
+    final save = find.text('SAVE');
+    await tester.ensureVisible(save);
+    await tester.pumpAndSettle();
+    await tester.tap(save);
+    await settleDb(tester);
+    await tester.pumpAndSettle();
+
+    final v = (await tester.runAsync(
+      () => dao.listVariants(slotId),
+    ))!.single.variant;
+    expect(
+      [v.targetSets, v.targetRepsMin, v.targetRepsMax, v.dropCount],
+      [4, 6, 8, 0],
+    );
+    expect(v.defaultWeightKg, 45);
+    expect(find.text('4×6-8 · 45 KG'), findsOneWidget);
+    expect(find.text('×1'), findsNothing, reason: 'no drop pill any more');
     await closeDb(tester);
   });
 

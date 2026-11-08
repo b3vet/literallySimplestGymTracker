@@ -6,16 +6,20 @@ import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
+import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
+import '../domain/program_exercise.dart';
 import '../domain/program_exercise_variant.dart';
 import 'exercise_edit_sheet.dart';
 
 /// SOW-14: a slot's variants — list, add, edit, delete. Opened from the
 /// `VARIANTS · N` row of the program editor's exercise sheet. Each variant is
-/// an ordinary exercise with its own target weight and step; sets, reps and
-/// drop count stay on the slot.
+/// an ordinary exercise with its own prescription — sets, rep range, drops,
+/// weight and step (DEC-0007 #13). A variant from 1.5.0 (13) has NULLs there
+/// and inherits the slot's values; the editor shows them prefilled and saves
+/// them explicitly.
 Future<void> showVariantsSheet(
   BuildContext context, {
   required String programExerciseId,
@@ -68,16 +72,24 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
     ref.invalidate(dayVariantsProvider);
   }
 
+  Future<ProgramExercise?> _slot() =>
+      ref.read(programExerciseProvider(widget.programExerciseId).future);
+
   Future<void> _add() async {
+    // A new variant starts from the slot's sets, reps and drops; its weight
+    // comes from the name autofill (a machine rarely runs the bar's weight).
+    final slot = await _slot();
+    if (!mounted) return;
     final result = await showExerciseEditSheet(
       context,
       unit: _unit,
       initialName: '',
-      initialSets: 1,
-      initialRepsMin: 1,
-      initialRepsMax: 1,
+      initialSets: slot?.targetSets ?? 3,
+      initialRepsMin: slot?.targetRepsMin ?? 8,
+      initialRepsMax: slot?.targetRepsMax ?? 12,
       initialWeightKg: 0,
       initialWeightStepKg: null,
+      initialDropCount: slot?.dropCount ?? 0,
       variantMode: true,
     );
     if (result == null || !mounted) return;
@@ -89,6 +101,10 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
             exerciseName: result.name,
             defaultWeightKg: result.weightKg,
             weightStepKg: result.weightStepKg,
+            targetSets: result.sets,
+            targetRepsMin: result.repsMin,
+            targetRepsMax: result.repsMax,
+            dropCount: result.dropCount,
           );
       setState(() => _error = null);
     } on VariantConflict catch (e) {
@@ -98,15 +114,20 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
   }
 
   Future<void> _edit(ProgramExerciseVariantView v) async {
+    // NULL (a build-13 variant) shows the slot's value it inherits.
+    final slot = await _slot();
+    if (!mounted) return;
+    final run = slot == null ? null : v.variant.resolvedOn(slot);
     final result = await showExerciseEditSheet(
       context,
       unit: _unit,
       initialName: v.exerciseName,
-      initialSets: 1,
-      initialRepsMin: 1,
-      initialRepsMax: 1,
+      initialSets: run?.targetSets ?? v.variant.targetSets ?? 3,
+      initialRepsMin: run?.targetRepsMin ?? v.variant.targetRepsMin ?? 8,
+      initialRepsMax: run?.targetRepsMax ?? v.variant.targetRepsMax ?? 12,
       initialWeightKg: v.variant.defaultWeightKg,
-      initialWeightStepKg: v.variant.weightStepKg,
+      initialWeightStepKg: run?.weightStepKg ?? v.variant.weightStepKg,
+      initialDropCount: run?.dropCount ?? v.variant.dropCount ?? 0,
       canDelete: true,
       variantMode: true,
     );
@@ -121,6 +142,10 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
           exerciseName: result.name,
           defaultWeightKg: result.weightKg,
           weightStepKg: result.weightStepKg,
+          targetSets: result.sets,
+          targetRepsMin: result.repsMin,
+          targetRepsMax: result.repsMax,
+          dropCount: result.dropCount,
         );
       }
       setState(() => _error = null);
@@ -141,6 +166,9 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
     final unit = ref.watch(settingsProvider).unit ?? WeightUnit.kg;
     final async = ref.watch(slotVariantsProvider(widget.programExerciseId));
     final list = async.value ?? const <ProgramExerciseVariantView>[];
+    final slot = ref
+        .watch(programExerciseProvider(widget.programExerciseId))
+        .value;
 
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -149,7 +177,7 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
         LsSheetHeader(eyebrow: 'VARIANTS', title: widget.baseName),
         const SizedBox(height: LsGap.sub),
         Text(
-          'SAME SETS & REPS · OWN WEIGHT',
+          'EACH WITH ITS OWN SETS, REPS & WEIGHT',
           style: LsType.monoMeta.copyWith(color: t.surface.text2, fontSize: 14),
         ),
         const SizedBox(height: LsGap.loose),
@@ -163,8 +191,8 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
             padding: const EdgeInsets.symmetric(vertical: 12),
             child: Text(
               'No variants yet. Add the machine or dumbbell version of this '
-              'lift with its own weight, then switch to it from the workout '
-              'menu.',
+              'lift with its own sets, reps and weight, then switch to it from '
+              'the workout menu.',
               style: LsType.bodyM.copyWith(color: t.surface.text2),
             ),
           )
@@ -186,10 +214,17 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
                   onDismissed: (_) => _delete(v),
                   child: _VariantTile(
                     name: v.exerciseName,
-                    weight: WeightConv.format(
-                      v.variant.defaultWeightKg,
+                    prescription: variantPrescriptionLabel(
+                      slot == null ? null : v.variant.resolvedOn(slot),
+                      v.variant,
                       unit,
-                    ).toUpperCase(),
+                    ),
+                    dropCount:
+                        (slot == null
+                            ? null
+                            : v.variant.resolvedOn(slot).dropCount) ??
+                        v.variant.dropCount ??
+                        0,
                     onTap: () => _edit(v),
                   ),
                 );
@@ -216,14 +251,34 @@ class _VariantsSheetState extends ConsumerState<VariantsSheet> {
   }
 }
 
+/// A variant's prescription in one line: `4×6-8 · 40 KG` (`4×8` for a fixed
+/// rep count). [run] is the variant resolved on its slot; while the slot is
+/// still loading it falls back to the variant's own values, then to the
+/// weight alone.
+String variantPrescriptionLabel(
+  ProgramExercise? run,
+  ProgramExerciseVariant variant,
+  WeightUnit unit,
+) {
+  final weight = WeightConv.format(variant.defaultWeightKg, unit).toUpperCase();
+  final sets = run?.targetSets ?? variant.targetSets;
+  final min = run?.targetRepsMin ?? variant.targetRepsMin;
+  final max = run?.targetRepsMax ?? variant.targetRepsMax;
+  if (sets == null || min == null || max == null) return weight;
+  final reps = min == max ? '$min' : '$min-$max';
+  return '$sets×$reps · $weight';
+}
+
 class _VariantTile extends StatelessWidget {
   const _VariantTile({
     required this.name,
-    required this.weight,
+    required this.prescription,
+    required this.dropCount,
     required this.onTap,
   });
   final String name;
-  final String weight;
+  final String prescription;
+  final int dropCount;
   final VoidCallback onTap;
 
   @override
@@ -244,22 +299,36 @@ class _VariantTile extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                child: Text(
-                  name.toUpperCase(),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: LsType.displayS.copyWith(
-                    color: t.surface.text,
-                    fontSize: 20,
-                  ),
-                ),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                weight,
-                style: LsType.monoData.copyWith(
-                  color: t.surface.text,
-                  fontSize: 18,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name.toUpperCase(),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: LsType.displayS.copyWith(
+                        color: t.surface.text,
+                        fontSize: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: LsGap.tight,
+                      runSpacing: 4,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          prescription,
+                          style: LsType.monoData.copyWith(
+                            color: t.surface.text,
+                            fontSize: 18,
+                          ),
+                        ),
+                        if (dropCount > 0)
+                          MetaPill(value: '×$dropCount', text: 'DROP'),
+                      ],
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 6),

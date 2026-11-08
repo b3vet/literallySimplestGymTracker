@@ -142,8 +142,11 @@ class _ExerciseEditSheet extends ConsumerStatefulWidget {
   final bool canDelete;
   final bool canRevert;
 
-  /// SOW-14 variant add/edit: only name, weight and weight step — sets, reps
-  /// and drop count belong to the slot.
+  /// SOW-14 variant add/edit. A variant is a full exercise prescription
+  /// (DEC-0007 #13): the same fields and validation as a program exercise.
+  /// Only the wording, the missing VARIANTS row and the name autofill differ
+  /// — picking a name autofills the weight alone, so the sets, reps and drops
+  /// prefilled from the variant (or its slot) stay.
   final bool variantMode;
 
   /// Non-null in the program editor's slot sheet: shows a `VARIANTS · N` row
@@ -280,14 +283,16 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
 
     if (!mounted) return;
 
+    // A variant's prescription starts from its slot: autofill the weight only.
+    final fillPrescription = !widget.variantMode;
     setState(() {
-      if (!_userTouchedSets) {
+      if (fillPrescription && !_userTouchedSets) {
         _sets = pe.targetSets.clamp(_setsMin, _setsMax);
       }
-      if (!_userTouchedRepsMin) {
+      if (fillPrescription && !_userTouchedRepsMin) {
         _repsMinVal = pe.targetRepsMin.clamp(_repsMin, _repsMax);
       }
-      if (!_userTouchedRepsMax) {
+      if (fillPrescription && !_userTouchedRepsMax) {
         _repsMaxVal = pe.targetRepsMax.clamp(_repsMinVal, _repsMax);
       }
       if (!_userTouchedWeight) {
@@ -301,11 +306,13 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!_userTouchedSets) _setsCtrl.jumpToItem(_sets - _setsMin);
-      if (!_userTouchedRepsMin) {
+      if (fillPrescription && !_userTouchedSets) {
+        _setsCtrl.jumpToItem(_sets - _setsMin);
+      }
+      if (fillPrescription && !_userTouchedRepsMin) {
         _repsMinCtrl.jumpToItem(_repsMinVal - _repsMin);
       }
-      if (!_userTouchedRepsMax) {
+      if (fillPrescription && !_userTouchedRepsMax) {
         _repsMaxCtrl.jumpToItem(_repsMaxVal - _repsMin);
       }
       if (!_userTouchedWeight) {
@@ -431,78 +438,76 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                     height: 240,
                     child: Row(
                       children: [
-                        if (widget.variantMode) const Spacer(),
-                        if (!widget.variantMode) ...[
-                          Expanded(
-                            child: PickerColumn(
-                              label: 'SETS',
-                              controller: _setsCtrl,
-                              itemCount: _setsMax - _setsMin + 1,
-                              builder: (i, sel) =>
-                                  PickerText('${i + _setsMin}', selected: sel),
-                              onChanged: (i) {
-                                setState(() {
-                                  _sets = i + _setsMin;
-                                  _userTouchedSets = true;
-                                });
-                              },
-                            ),
-                          ),
-                          Expanded(
-                            child: PickerColumn(
-                              label: 'REP MIN',
-                              controller: _repsMinCtrl,
-                              itemCount: _repsMax - _repsMin + 1,
-                              builder: (i, sel) =>
-                                  PickerText('${i + _repsMin}', selected: sel),
-                              onChanged: (i) {
-                                setState(() {
-                                  _repsMinVal = i + _repsMin;
-                                  _userTouchedRepsMin = true;
-                                  if (_repsMaxVal < _repsMinVal) {
-                                    _repsMaxVal = _repsMinVal;
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          if (mounted) {
-                                            _repsMaxCtrl.jumpToItem(
-                                              _repsMaxVal - _repsMin,
-                                            );
-                                          }
-                                        });
-                                  }
-                                });
-                              },
-                            ),
-                          ),
-                          Expanded(
-                            child: PickerColumn(
-                              label: 'REP MAX',
-                              controller: _repsMaxCtrl,
-                              itemCount: _repsMax - _repsMin + 1,
-                              builder: (i, sel) =>
-                                  PickerText('${i + _repsMin}', selected: sel),
-                              onChanged: (i) {
-                                setState(() {
-                                  _repsMaxVal = i + _repsMin;
-                                  _userTouchedRepsMax = true;
-                                  if (_repsMaxVal < _repsMinVal) {
-                                    _repsMinVal = _repsMaxVal;
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          if (mounted) {
-                                            _repsMinCtrl.jumpToItem(
-                                              _repsMinVal - _repsMin,
-                                            );
-                                          }
-                                        });
-                                  }
-                                });
-                              },
-                            ),
-                          ),
-                        ],
                         Expanded(
-                          flex: widget.variantMode ? 2 : 1,
+                          child: PickerColumn(
+                            label: 'SETS',
+                            controller: _setsCtrl,
+                            itemCount: _setsMax - _setsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _setsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _sets = i + _setsMin;
+                                _userTouchedSets = true;
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'REP MIN',
+                            controller: _repsMinCtrl,
+                            itemCount: _repsMax - _repsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _repsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _repsMinVal = i + _repsMin;
+                                _userTouchedRepsMin = true;
+                                if (_repsMaxVal < _repsMinVal) {
+                                  _repsMaxVal = _repsMinVal;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      _repsMaxCtrl.jumpToItem(
+                                        _repsMaxVal - _repsMin,
+                                      );
+                                    }
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
+                          child: PickerColumn(
+                            label: 'REP MAX',
+                            controller: _repsMaxCtrl,
+                            itemCount: _repsMax - _repsMin + 1,
+                            builder: (i, sel) =>
+                                PickerText('${i + _repsMin}', selected: sel),
+                            onChanged: (i) {
+                              setState(() {
+                                _repsMaxVal = i + _repsMin;
+                                _userTouchedRepsMax = true;
+                                if (_repsMaxVal < _repsMinVal) {
+                                  _repsMinVal = _repsMaxVal;
+                                  WidgetsBinding.instance.addPostFrameCallback((
+                                    _,
+                                  ) {
+                                    if (mounted) {
+                                      _repsMinCtrl.jumpToItem(
+                                        _repsMinVal - _repsMin,
+                                      );
+                                    }
+                                  });
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        Expanded(
                           child: PickerColumn(
                             label: 'WT',
                             unitSuffix: unit.short,
@@ -520,7 +525,6 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                             },
                           ),
                         ),
-                        if (widget.variantMode) const Spacer(),
                       ],
                     ),
                   ),
@@ -545,53 +549,51 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                       });
                     },
                   ),
-                  if (!widget.variantMode) ...[
+                  const SizedBox(height: LsGap.loose),
+                  EyebrowLabel('DROP SET'),
+                  const SizedBox(height: LsGap.sub),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: LsChoiceChip(
+                          label: 'OFF',
+                          selected: _dropCount == 0,
+                          expand: true,
+                          onTap: () => setState(() => _dropCount = 0),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: LsChoiceChip(
+                          label: 'ON',
+                          selected: _dropCount > 0,
+                          expand: true,
+                          onTap: () => setState(() {
+                            if (_dropCount == 0) _dropCount = 1;
+                          }),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (_dropCount > 0) ...[
                     const SizedBox(height: LsGap.loose),
-                    EyebrowLabel('DROP SET'),
+                    EyebrowLabel('DROPS'),
                     const SizedBox(height: LsGap.sub),
                     Row(
                       children: [
-                        Expanded(
-                          child: LsChoiceChip(
-                            label: 'OFF',
-                            selected: _dropCount == 0,
-                            expand: true,
-                            onTap: () => setState(() => _dropCount = 0),
+                        for (var n = 1; n <= _dropsMax; n++) ...[
+                          if (n > 1) const SizedBox(width: 8),
+                          Expanded(
+                            child: LsChoiceChip(
+                              label: '$n',
+                              selected: _dropCount == n,
+                              expand: true,
+                              onTap: () => setState(() => _dropCount = n),
+                            ),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: LsChoiceChip(
-                            label: 'ON',
-                            selected: _dropCount > 0,
-                            expand: true,
-                            onTap: () => setState(() {
-                              if (_dropCount == 0) _dropCount = 1;
-                            }),
-                          ),
-                        ),
+                        ],
                       ],
                     ),
-                    if (_dropCount > 0) ...[
-                      const SizedBox(height: LsGap.loose),
-                      EyebrowLabel('DROPS'),
-                      const SizedBox(height: LsGap.sub),
-                      Row(
-                        children: [
-                          for (var n = 1; n <= _dropsMax; n++) ...[
-                            if (n > 1) const SizedBox(width: 8),
-                            Expanded(
-                              child: LsChoiceChip(
-                                label: '$n',
-                                selected: _dropCount == n,
-                                expand: true,
-                                onTap: () => setState(() => _dropCount = n),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ],
                   ],
                   const SizedBox(height: LsGap.loose),
                   LsButton(
