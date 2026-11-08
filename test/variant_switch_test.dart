@@ -4,6 +4,8 @@ import 'package:ls_workout_tracker/core/settings/settings_provider.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
 import 'package:ls_workout_tracker/features/workout/application/rest_timer_controller.dart';
+import 'package:ls_workout_tracker/features/workout/application/summary_controller.dart'
+    show attributeToSlots;
 import 'package:ls_workout_tracker/features/workout/application/watch_snapshot.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:ls_workout_tracker/features/workout/domain/active_session.dart';
@@ -285,6 +287,28 @@ void main() {
           s = slot(on: 'bar', target: back, machineSets: 4);
         }
       });
+    });
+
+    // D-0016 review #1: a "Change exercise" swap the slot has since left
+    // still counts — the override row names it only in ran_exercise_ids.
+    test('sets on an exercise the slot left still count', () {
+      // Bar → Cable (2 logged) → Machine (target 1) → back to Bar.
+      final s = slot(on: 'machine', target: 1).copyWith(
+        previousExerciseId: 'cable',
+        ranExerciseIds: ['bar', 'cable'],
+      );
+      final done = sets({'cable': 2});
+      expect(s.slotDoneSets(done), 2);
+      expect(carryOverTargetSets(s, 'bar', done), 1);
+      expect(carryOverTargetSets(s, 'db', done), 1);
+      // The row before v9 knew only its two links: Machine and the base.
+      final after = slot(on: 'bar', target: 1).copyWith(
+        previousExerciseId: 'machine',
+        ranExerciseIds: ['bar', 'cable', 'machine'],
+      );
+      expect(after.ranBefore, ['cable', 'machine']);
+      expect(after.earlierSets(done), [('cable', 2)]);
+      expect(carryOverTargetSets(after, 'machine', done), 1);
     });
 
     test('a drop set counts once', () {
@@ -616,6 +640,96 @@ void main() {
       expect(
         await WorkoutDao(db).overridesForSession(session(c).sessionId),
         isEmpty,
+      );
+    });
+
+    // D-0016 review #1 (regression): sets done on a swapped-in non-member
+    // dropped out of the slot count once the slot moved on — base Bar plan 3
+    // → Change exercise to Cable → 2 on Cable → Machine (1, right) → Bar
+    // gave 3, deleted the override, lost the banner and the summary link.
+    Future<String> barCableMachineBar(
+      ProviderContainer c, {
+      Future<ProviderContainer> Function()? resumeAfterMachine,
+    }) async {
+      var ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.substituteExercise(
+        queueIdx: 0,
+        exerciseName: 'Cable Press',
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 30,
+      );
+      final cableId = session(c).queue.first.exerciseId;
+      await log(c, 30);
+      await log(c, 30);
+      await ctrl.switchVariant(0, machineId);
+      expect(session(c).queue.first.targetSets, 1, reason: '3 − 2 on Cable');
+      if (resumeAfterMachine != null) {
+        c = await resumeAfterMachine();
+        ctrl = c.read(activeSessionProvider.notifier);
+        expect(session(c).queue.first.exerciseId, machineId);
+        expect(session(c).queue.first.targetSets, 1);
+      }
+      await ctrl.switchVariant(0, barId);
+      return cableId;
+    }
+
+    Future<void> expectBarAfterCable(
+      ProviderContainer c,
+      String cableId,
+    ) async {
+      final s = session(c);
+      final slot = s.queue.first;
+      expect(slot.exerciseId, barId);
+      expect(slot.targetSets, 1, reason: 'bar 3 − 2 on Cable − 0 on Machine');
+      expect(slot.isOverridden, isTrue, reason: 'the override is kept');
+      expect(slot.slotDoneSets(s.loggedSets), 2);
+      expect(
+        slot.earlierSets(s.loggedSets),
+        [(cableId, 2)],
+        reason: 'PREVIOUSLY 2 SETS ON CABLE PRESS',
+      );
+      final o = (await WorkoutDao(db).overridesForSession(s.sessionId)).single;
+      expect(o.exerciseId, barId);
+      expect(o.targetSets, 1);
+      expect(o.ranExerciseIds, containsAll([barId, cableId, machineId]));
+
+      // The summary still links the Cable sets to the slot (SAVE AS VARIANT).
+      final dao = ProgramDao(db);
+      final attribution = attributeToSlots(
+        exerciseIds: [cableId],
+        slots: await dao.listProgramExercises(dayId),
+        variantsBySlot: await dao.listVariantsForDay(dayId),
+        overrides: await WorkoutDao(db).overridesForSession(s.sessionId),
+      );
+      expect(attribution[cableId]?.slot.pe.id, slotId);
+      expect(attribution[cableId]?.variant, isNull, reason: 'a swap');
+
+      // One set on the bar finishes the slot.
+      await log(c, 60);
+      expect(session(c).cursor.exerciseIdx, 1, reason: '2 Cable + 1 Bar');
+    }
+
+    test('Bar → Change exercise to Cable, 2 logged → Machine → Bar: Bar '
+        'target 1, override and banner kept', () async {
+      final c = await started();
+      final cableId = await barCableMachineBar(c);
+      await expectBarAfterCable(c, cableId);
+    });
+
+    test('…and the same across resumes', () async {
+      final c = await started();
+      final cableId = await barCableMachineBar(
+        c,
+        resumeAfterMachine: container,
+      );
+      final resumed = await container();
+      await expectBarAfterCable(resumed, cableId);
+      expect(
+        session(await container()).cursor.exerciseIdx,
+        1,
+        reason: 'cursorAfter agrees on the next resume',
       );
     });
 

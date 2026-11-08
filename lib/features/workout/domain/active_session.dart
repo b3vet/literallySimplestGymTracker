@@ -92,6 +92,7 @@ class PlannedExercise {
     this.baseDropCount,
     this.variants = const [],
     this.memberWeights = const {},
+    this.ranExerciseIds = const [],
   });
   final String programExerciseId;
   final String exerciseId;
@@ -161,6 +162,47 @@ class PlannedExercise {
   /// resume keeps just that one — SOW-14 §11).
   final Map<String, MemberWeight> memberWeights;
 
+  /// Every exercise this slot has run in this session, oldest first — base,
+  /// variants and "Change exercise" swaps alike (persisted on the override
+  /// row, DB v9; may include [exerciseId]). The row's own two links
+  /// ([exerciseId], [previousExerciseId]) lose the middle of a chain:
+  /// Cable → Machine → base would forget the Cable sets (D-0016 review #1).
+  final List<String> ranExerciseIds;
+
+  /// The exercises this slot ran before the one it runs now, oldest first:
+  /// [ranExerciseIds] plus [previousExerciseId] (all a row written before v9
+  /// knows), never [exerciseId]. Drives the PREVIOUSLY banner.
+  List<String> get ranBefore {
+    final out = <String>[];
+    for (final id in [
+      ...ranExerciseIds,
+      ?previousExerciseId,
+    ]) {
+      if (id != exerciseId && !out.contains(id)) out.add(id);
+    }
+    return out;
+  }
+
+  /// The exercises this slot ran before the current one that have sets
+  /// logged, as (exerciseId, completed sets), oldest first — the PREVIOUSLY
+  /// banner's lines.
+  List<(String, int)> earlierSets(List<WorkoutSet> logged) => [
+        for (final id in ranBefore)
+          if (completedSetsFor(logged, id) case final n when n > 0) (id, n),
+      ];
+
+  /// Every exercise the slot has run, the current one last — what a switch or
+  /// a swap records on the override row.
+  List<String> get ranThrough => [...ranBefore, exerciseId];
+
+  /// Every exercise whose sets count toward this slot: its members, whatever
+  /// it ran earlier in this session, and what it runs now.
+  Set<String> get slotExerciseIds => {
+        for (final m in members) m.exerciseId,
+        ...ranBefore,
+        exerciseId,
+      };
+
   /// Whether this slot is a drop-set exercise.
   bool get isDropSet => dropCount > 0;
 
@@ -205,11 +247,12 @@ class PlannedExercise {
         drops: m.dropCount ?? baseDropCount ?? dropCount,
       );
 
-  /// Sets logged on this slot under any member — and on the exercise it runs
-  /// as now when that is a "Change exercise" swap outside the members.
+  /// Sets logged on this slot: under any member, and under every exercise it
+  /// ran in this session — a "Change exercise" swap outside the members
+  /// included, even one the slot has since left ([slotExerciseIds]).
   int slotDoneSets(List<WorkoutSet> logged) {
     var n = 0;
-    for (final id in {for (final m in members) m.exerciseId, exerciseId}) {
+    for (final id in slotExerciseIds) {
       n += completedSetsFor(logged, id);
     }
     return n;
@@ -285,6 +328,7 @@ class PlannedExercise {
     bool? isInserted,
     int? dropCount,
     Map<String, MemberWeight>? memberWeights,
+    List<String>? ranExerciseIds,
   }) =>
       PlannedExercise(
         programExerciseId: programExerciseId,
@@ -315,6 +359,7 @@ class PlannedExercise {
         baseDropCount: baseDropCount,
         variants: variants,
         memberWeights: memberWeights ?? this.memberWeights,
+        ranExerciseIds: ranExerciseIds ?? this.ranExerciseIds,
       );
 }
 

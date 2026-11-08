@@ -8,9 +8,9 @@ const _dbFileName = 'simple_gym.db';
 
 /// Current schema version. Exposed so tests open their in-memory databases at
 /// exactly the version the app ships.
-const kDbVersion = 8;
+const kDbVersion = 9;
 
-/// One schema step: plain SQL, or code that inspects the schema first (v8).
+/// One schema step: plain SQL, or code that inspects the schema first (v8+).
 typedef _Step = Future<void> Function(DatabaseExecutor db);
 
 _Step _sql(List<String> statements) => (db) async {
@@ -30,6 +30,7 @@ final _steps = <_Step>[
   _sql(schemaV6Up),
   _sql(schemaV7Up),
   schemaV8Up,
+  schemaV9Up,
 ];
 
 Future<Database> openAppDatabase() async {

@@ -301,22 +301,17 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                   ),
                   const SizedBox(height: LsGap.loose),
                   // When the slot has been substituted AND the user already
-                  // logged sets under the previous exercise, surface that
+                  // logged sets under an exercise it ran before, surface that
                   // count so they aren't surprised by the set chips
-                  // restarting at 0. The pre-swap sets remain in their
-                  // history under the old name; this is just a hint.
+                  // restarting at 0. Every exercise the slot ran counts, not
+                  // just the last one (Cable → Machine → base still names
+                  // the Cable sets — D-0016 review #1). The pre-swap sets
+                  // remain in their history under the old name; this is just
+                  // a hint.
                   if (current.isOverridden &&
-                      current.previousExerciseId != null &&
-                      session.loggedSets.any(
-                        (s) => s.exerciseId == current.previousExerciseId,
-                      )) ...[
+                      current.earlierSets(session.loggedSets).isNotEmpty) ...[
                     _PreviousSetsBanner(
-                      previousExerciseId: current.previousExerciseId!,
-                      count: session.loggedSets
-                          .where(
-                            (s) => s.exerciseId == current.previousExerciseId,
-                          )
-                          .length,
+                      entries: current.earlierSets(session.loggedSets),
                     ),
                     const SizedBox(height: LsGap.sub),
                   ],
@@ -1110,20 +1105,27 @@ class _VariantBadge extends StatelessWidget {
 /// and switched machines. This is informational only; tapping doesn't do
 /// anything in v1.
 class _PreviousSetsBanner extends ConsumerWidget {
-  const _PreviousSetsBanner({
-    required this.previousExerciseId,
-    required this.count,
-  });
-  final String previousExerciseId;
-  final int count;
+  const _PreviousSetsBanner({required this.entries});
+
+  /// (exerciseId, sets), oldest first; never empty.
+  final List<(String, int)> entries;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
-    final name = ref.watch(exerciseNameProvider(previousExerciseId)).value;
-    final label = name == null
-        ? 'PREVIOUSLY LOGGED $count SET${count == 1 ? '' : 'S'}'
-        : 'PREVIOUSLY $count SET${count == 1 ? '' : 'S'} ON ${name.toUpperCase()}';
+    String sets(int n) => '$n SET${n == 1 ? '' : 'S'}';
+    final parts = [
+      for (final (id, n) in entries)
+        switch (ref.watch(exerciseNameProvider(id)).value) {
+          null => sets(n),
+          final name => '${sets(n)} ON ${name.toUpperCase()}',
+        },
+    ];
+    final label =
+        entries.length == 1 &&
+            ref.watch(exerciseNameProvider(entries.single.$1)).value == null
+        ? 'PREVIOUSLY LOGGED ${parts.single}'
+        : 'PREVIOUSLY ${parts.join(' · ')}';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(

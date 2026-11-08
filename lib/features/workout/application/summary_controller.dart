@@ -375,11 +375,13 @@ class SlotAttribution {
 /// (absent from the result — the caller's plan lookup handles it) → this
 /// session's override for a slot that holds it as a variant → the first slot
 /// (in day order) holding it as a variant → a slot it was swapped into this
-/// session (override row's exercise or previous exercise; inserted rows never
-/// count — those exercises are "added", not swapped) → review #6, the middle
-/// of a swap chain (B → X → Y → Z keeps only Z and Y on the override row, so
-/// X is in no row): every exercise logged this session got there through a
-/// plan slot, a variant, an insert or a "Change exercise", so one that matches
+/// session (override row's exercise, previous exercise, or any exercise in its
+/// `ran_exercise_ids` — DB v9, D-0016 review #1; inserted rows never count —
+/// those exercises are "added", not swapped) → review #6, the middle of a
+/// swap chain on a row written before v9 (B → X → Y → Z kept only Z and Y on
+/// the override row, so X is in no row): every exercise logged this session
+/// got there through a plan slot, a variant, an insert or a "Change
+/// exercise", so one that matches
 /// none of them was a swap — attributed to the swapped slot when exactly one
 /// slot was swapped outside its members and no inserted exercise was swapped
 /// (whose own chain could have lost links). Otherwise it stays unattributed
@@ -412,27 +414,35 @@ Map<String, SlotAttribution> attributeToSlots({
   final swappedSlots = {
     for (final o in touching)
       if (!isMember(o.programExerciseId, o.exerciseId) ||
-          !isMember(o.programExerciseId, o.previousExerciseId))
+          !isMember(o.programExerciseId, o.previousExerciseId) ||
+          o.ranExerciseIds.any((x) => !isMember(o.programExerciseId, x)))
         o.programExerciseId,
   };
   final insertedRows = [for (final o in overrides) if (o.inserted) o];
   final insertedIds = {
     for (final o in insertedRows) ...[
       o.exerciseId,
-      if (o.previousExerciseId != null) o.previousExerciseId!,
+      ?o.previousExerciseId,
+      ...o.ranExerciseIds,
     ],
   };
   final chainSlot = swappedSlots.length == 1 &&
           insertedRows.every((o) => o.previousExerciseId == null)
       ? slotById[swappedSlots.single]
       : null;
+  // The slot ran [id] this session: its current or previous exercise, or one
+  // further back in the chain (v9).
+  bool ran(SessionExerciseOverride o, String id) =>
+      o.exerciseId == id ||
+      o.previousExerciseId == id ||
+      o.ranExerciseIds.contains(id);
 
   final out = <String, SlotAttribution>{};
   for (final id in exerciseIds) {
     if (bases.contains(id)) continue;
     SlotAttribution? found;
     for (final o in touching) {
-      if (o.exerciseId != id && o.previousExerciseId != id) continue;
+      if (!ran(o, id)) continue;
       final v = variantOf(o.programExerciseId, id);
       if (v != null) {
         found = SlotAttribution(slot: slotById[o.programExerciseId]!, variant: v);
@@ -450,7 +460,7 @@ Map<String, SlotAttribution> attributeToSlots({
     }
     if (found == null) {
       for (final o in touching) {
-        if (o.exerciseId == id || o.previousExerciseId == id) {
+        if (ran(o, id)) {
           found = SlotAttribution(
             slot: slotById[o.programExerciseId]!,
             override: o.exerciseId == id ? o : null,

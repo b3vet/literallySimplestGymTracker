@@ -66,15 +66,21 @@ Cursor cursorAfter(List<PlannedExercise> queue, List<WorkoutSet> loggedSets) {
 }
 
 /// Set target for [toExerciseId] when a slot switches between its members
-/// (base, variants — and whatever it runs as now), so the sets already done on
-/// the slot count instead of restarting (SOW-14). Pure + top-level for tests.
+/// (base, variants — and every exercise it ran this session, "Change
+/// exercise" swaps included: [PlannedExercise.slotExerciseIds]), so the sets
+/// already done on the slot count instead of restarting (SOW-14). Pure +
+/// top-level for tests.
 ///
 /// Switching to member M means "do M's prescription for the rest of this slot"
 /// (DEC-0007 #13): M's planned set count — its own, or the slot's when it
-/// inherits — minus every set already done on the OTHER members, and never
-/// below what M itself already has:
+/// inherits — minus every set already done on the slot's OTHER exercises, and
+/// never below what M itself already has:
 ///
-///     max(doneOn(M), M.targetSets − Σ doneOn(other members))
+///     max(doneOn(M), M.targetSets − Σ doneOn(other slot exercises))
+///
+/// Base Bar (plan 3) → Change exercise to Cable, 2 logged → Machine: 1 →
+/// back to Bar: still 1 — the Cable sets stay counted though the override
+/// row's two links no longer name Cable (D-0016 review #1).
 ///
 /// Base 3 → variant 4 with 1 done on the base → 3 on the variant; base 4 →
 /// variant 2 with 3 done → 0: the slot counts as complete under M's plan,
@@ -93,10 +99,7 @@ int carryOverTargetSets(
     if (m.exerciseId == toExerciseId) to = m;
   }
   final planned = to == null ? slot.targetSets : slot.prescriptionOf(to).sets;
-  final others = <String>{
-    for (final m in slot.members) m.exerciseId,
-    slot.exerciseId,
-  }..remove(toExerciseId);
+  final others = slot.slotExerciseIds..remove(toExerciseId);
   var doneElsewhere = 0;
   for (final id in others) {
     doneElsewhere += completedSetsFor(logged, id);
@@ -623,6 +626,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: slot.dropCount,
+      ranExerciseIds: slot.ranExerciseIds,
     );
     final skipped = slot.copyWith(skipped: true, isOverridden: true);
     final newQueue = [...current.queue]..[idx] = skipped;
@@ -720,6 +724,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: slot.dropCount,
+      ranExerciseIds: slot.ranExerciseIds,
     );
     final replaced = slot.copyWith(targetSets: targetSets, isOverridden: true);
     final newQueue = [...current.queue]..[idx] = replaced;
@@ -815,6 +820,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         previousExerciseId: o.previousExerciseId,
         skipped: o.skipped,
         dropCount: o.dropCount,
+        ranExerciseIds: o.ranExerciseIds,
       );
     }).toList();
   }
@@ -848,6 +854,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         position: o.orderPos ?? double.maxFinite,
         isInserted: true,
         dropCount: o.dropCount,
+        ranExerciseIds: o.ranExerciseIds,
       ));
     }
     slots.sort((a, b) => a.position.compareTo(b.position));
@@ -887,6 +894,8 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     final sameExercise = exercise.id == slot.exerciseId;
     final newPreviousExerciseId =
         sameExercise ? slot.previousExerciseId : slot.exerciseId;
+    // Keep the whole chain, not just the last link (D-0016 review #1).
+    final ran = sameExercise ? slot.ranExerciseIds : slot.ranThrough;
 
     await _workoutDao.upsertOverride(
       sessionId: current.sessionId,
@@ -902,6 +911,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: dropCount,
+      ranExerciseIds: ran,
     );
     final replaced = slot.copyWith(
       exerciseId: exercise.id,
@@ -914,6 +924,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       isOverridden: true,
       previousExerciseId: newPreviousExerciseId,
       dropCount: dropCount,
+      ranExerciseIds: ran,
     );
     final newQueue = [...current.queue]..[queueIdx] = replaced;
     final next = current.copyWith(queue: newQueue);
@@ -968,15 +979,13 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
 
     if (member.isBase) {
       // Drop the override only when the round trip left no trace: nothing
-      // logged on any non-base member (or on a swapped-in exercise), and every
-      // plan value — sets, reps, drops, weight, step — as planned. Otherwise
+      // logged on any exercise the slot ran other than the base — variants
+      // and swapped-in exercises, even ones it has since left — and every
+      // plan value (sets, reps, drops, weight, step) as planned. Otherwise
       // the override stays, so the PREVIOUSLY banner and summary attribution
-      // keep the variant's sets and a weight edit survives.
-      final loggedOffBase = {
-        for (final m in slot.members)
-          if (!m.isBase) m.exerciseId,
-        slot.exerciseId,
-      }.any((id) => completedSetsFor(current.loggedSets, id) > 0);
+      // keep those sets and a weight edit survives.
+      final loggedOffBase = (slot.slotExerciseIds..remove(member.exerciseId))
+          .any((id) => completedSetsFor(current.loggedSets, id) > 0);
       // Compared against the fresh plan row, so a plan edited mid-workout
       // keeps the override too.
       final planned =
@@ -1009,6 +1018,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
           isOverridden: false,
           previousExerciseId: null,
           memberWeights: weights,
+          // Nothing was logged off the base, so nothing to remember — and a
+          // resume (no override row) would not remember it either.
+          ranExerciseIds: const [],
         );
         _replaceSlot(current, queueIdx, restored);
         return;
@@ -1027,6 +1039,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       weightStepKg: step,
       skipped: false,
       dropCount: plan.drops,
+      ranExerciseIds: slot.ranThrough,
     );
     _replaceSlot(
       current,
@@ -1043,6 +1056,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         isOverridden: true,
         previousExerciseId: slot.exerciseId,
         memberWeights: weights,
+        ranExerciseIds: slot.ranThrough,
       ),
     );
   }

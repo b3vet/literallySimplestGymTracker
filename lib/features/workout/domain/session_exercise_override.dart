@@ -28,6 +28,7 @@ class SessionExerciseOverride {
     this.inserted = false,
     this.orderPos,
     this.dropCount = 0,
+    this.ranExerciseIds = const [],
   });
 
   final String id;
@@ -65,4 +66,10 @@ class SessionExerciseOverride {
   /// Drop-set config carried on the override so a mid-session swap/edit/insert
   /// keeps it. 0 = normal; N ≥ 1 = drops after the top.
   final int dropCount;
+
+  /// Every exercise this slot has run in the session, oldest first (DB v9,
+  /// `ran_exercise_ids`; may include [exerciseId]). The row's two links alone
+  /// lose the middle of a chain (Cable → Machine → base keeps only the base
+  /// and Machine). Empty on rows written before v9.
+  final List<String> ranExerciseIds;
 }

@@ -221,3 +221,32 @@ Future<void> schemaV8Up(DatabaseExecutor db) async {
     );
   }
 }
+
+/// v9 (SOW-14, D-0016 review #1): every exercise a slot has run in this
+/// session, on its override row — a JSON array of exercise ids, oldest first.
+/// The row itself only keeps the last two links (`exercise_id`,
+/// `previous_exercise_id`), so a slot that ran Cable (a "Change exercise"),
+/// then Machine, then the base again forgot the Cable sets: the carry-over
+/// target, the switch-back rule, the PREVIOUSLY banner and the summary's slot
+/// link all lost them. Workout sets carry no slot id, so this cannot be
+/// derived from the sets alone. Nullable: NULL (rows written before v9, or by
+/// an older build) means "nothing recorded beyond the two links".
+const overrideRanExerciseIdsColumn = 'ran_exercise_ids';
+
+/// Adds [overrideRanExerciseIdsColumn] to `session_exercise_overrides` when it
+/// is missing. **Idempotent by inspection**, like [schemaV8Up]: an older build
+/// (1.4.1, 13, or 14 at v8) stamps its own `user_version` on this file, so the
+/// next launch re-runs this step on a table that already has the column.
+Future<void> schemaV9Up(DatabaseExecutor db) async {
+  final have = {
+    for (final c in await db.rawQuery(
+      'PRAGMA table_info(session_exercise_overrides)',
+    ))
+      c['name'] as String,
+  };
+  if (have.contains(overrideRanExerciseIdsColumn)) return;
+  await db.execute(
+    'ALTER TABLE session_exercise_overrides '
+    'ADD COLUMN $overrideRanExerciseIdsColumn TEXT',
+  );
+}

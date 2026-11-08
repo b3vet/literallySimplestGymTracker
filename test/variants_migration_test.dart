@@ -441,6 +441,119 @@ void main() {
     await v8.close();
   });
 
+  // ---------- v9: the exercises a slot ran (D-0016 review #1) ----------
+
+  Future<List<String>> overrideColumns(Database db) async => [
+    for (final c in await db.rawQuery(
+      'PRAGMA table_info(session_exercise_overrides)',
+    ))
+      c['name'] as String,
+  ];
+
+  test('v9 adds ran_exercise_ids to overrides; every reset (6, 7, and 8 — '
+      'build 14) re-runs it as a no-op and keeps the ids', () async {
+    // A file as build 14 left it (v8, no column), with a v8 override row.
+    final b13 = await openAsBuild13();
+    await seedV6(b13);
+    await b13.close();
+    final v8 = await databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: 8,
+        onConfigure: configureDatabase,
+        onUpgrade: (db, _, _) => schemaV8Up(db),
+      ),
+    );
+    expect(await overrideColumns(v8), isNot(contains('ran_exercise_ids')));
+    await v8.close();
+
+    final first = await openAsCurrent();
+    expect(await first.getVersion(), kDbVersion);
+    expect(await overrideColumns(first), contains('ran_exercise_ids'));
+    final o = (await WorkoutDao(first).overridesForSession(
+      (await first.query('workout_sessions')).single['id'] as String,
+    )).single;
+    expect(o.ranExerciseIds, isEmpty, reason: 'a v8 row: NULL reads as none');
+    await WorkoutDao(first).upsertOverride(
+      sessionId: o.sessionId,
+      programExerciseId: o.programExerciseId,
+      exerciseId: o.exerciseId,
+      previousExerciseId: o.previousExerciseId,
+      targetSets: o.targetSets,
+      targetRepsMin: o.targetRepsMin,
+      targetRepsMax: o.targetRepsMax,
+      defaultWeightKg: o.defaultWeightKg,
+      dropCount: o.dropCount,
+      ranExerciseIds: [o.previousExerciseId!, o.exerciseId],
+    );
+    final shape = await overrideColumns(first);
+    await first.close();
+
+    for (final older in [6, 7, 8]) {
+      final old = await databaseFactoryFfi.openDatabase(
+        path,
+        options: OpenDatabaseOptions(
+          version: older,
+          onConfigure: configureDatabase,
+        ),
+      );
+      expect(await old.getVersion(), older);
+      await old.close();
+      final again = await openAsCurrent();
+      expect(await again.getVersion(), kDbVersion);
+      expect(await overrideColumns(again), shape, reason: 'after v$older');
+      expect(
+        (await WorkoutDao(again).overridesForSession(o.sessionId))
+            .single
+            .ranExerciseIds,
+        [o.previousExerciseId, o.exerciseId],
+        reason: 'the ids survive the v$older round trip',
+      );
+      await again.close();
+    }
+
+    final db = await openTestDb();
+    addTearDown(db.close);
+    final cols = await overrideColumns(db);
+    expect(cols, contains('ran_exercise_ids'), reason: 'fresh install');
+    await schemaV9Up(db);
+    await schemaV9Up(db);
+    expect(await overrideColumns(db), cols);
+  });
+
+  test('upsertOverride only ever adds to ran_exercise_ids', () async {
+    final db = await openTestDb();
+    addTearDown(db.close);
+    await seedV6(db);
+    final dao = WorkoutDao(db);
+    final sessionId =
+        (await db.query('workout_sessions')).single['id'] as String;
+    final o = (await dao.overridesForSession(sessionId)).single;
+    Future<void> write(List<String> ran) => dao.upsertOverride(
+      sessionId: sessionId,
+      programExerciseId: o.programExerciseId,
+      exerciseId: o.exerciseId,
+      targetSets: 3,
+      targetRepsMin: 5,
+      targetRepsMax: 8,
+      defaultWeightKg: 50,
+      ranExerciseIds: ran,
+    );
+    Future<List<String>> read() async =>
+        (await dao.overridesForSession(sessionId)).single.ranExerciseIds;
+
+    await write(['a', 'b']);
+    expect(await read(), ['a', 'b']);
+    await write(['b', 'c']);
+    expect(await read(), ['a', 'b', 'c']);
+    await write(const []); // e.g. a skip that doesn't know the chain
+    expect(await read(), ['a', 'b', 'c']);
+    await db.update('session_exercise_overrides', {
+      'ran_exercise_ids': 'not json',
+    });
+    expect(await read(), isEmpty, reason: 'unreadable counts as none');
+  });
+
   group('on a v7 database', () {
     late Database db;
     late String slotId;
