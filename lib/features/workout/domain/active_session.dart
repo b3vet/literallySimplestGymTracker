@@ -3,7 +3,9 @@ import '../../programs/domain/program_exercise_variant.dart';
 import 'workout_set.dart';
 
 /// One exercise a slot can run as (SOW-14): its base, or one of its variants.
-/// Each carries its OWN target weight + step; sets/reps/drops are the slot's.
+/// Each carries its OWN prescription — weight, step and (DEC-0007 #13) target
+/// sets, rep range and drop count; a null field inherits the slot's planned
+/// value ([PlannedExercise.prescriptionOf] resolves it).
 class SlotVariant {
   const SlotVariant({
     this.variantId,
@@ -11,6 +13,10 @@ class SlotVariant {
     required this.name,
     required this.defaultWeightKg,
     this.weightStepKg,
+    this.targetSets,
+    this.targetRepsMin,
+    this.targetRepsMax,
+    this.dropCount,
   });
 
   /// `program_exercise_variants.id`; null for the slot's base exercise.
@@ -22,6 +28,12 @@ class SlotVariant {
   /// kg; null → the slot's step.
   final double? weightStepKg;
 
+  /// Own prescription; null → the slot's planned value.
+  final int? targetSets;
+  final int? targetRepsMin;
+  final int? targetRepsMax;
+  final int? dropCount;
+
   bool get isBase => variantId == null;
 
   factory SlotVariant.fromView(ProgramExerciseVariantView v) => SlotVariant(
@@ -30,8 +42,20 @@ class SlotVariant {
         name: v.exerciseName,
         defaultWeightKg: v.variant.defaultWeightKg,
         weightStepKg: v.variant.weightStepKg,
+        targetSets: v.variant.targetSets,
+        targetRepsMin: v.variant.targetRepsMin,
+        targetRepsMax: v.variant.targetRepsMax,
+        dropCount: v.variant.dropCount,
       );
 }
+
+/// What a slot member asks for: its planned sets, rep range and drops.
+typedef SlotPrescription = ({
+  int sets,
+  int repsMin,
+  int repsMax,
+  int drops,
+});
 
 /// A session-only weight/step a slot member ran with (e.g. a "Change exercise"
 /// weight edit), remembered when the slot switches away from it so switching
@@ -62,6 +86,10 @@ class PlannedExercise {
     this.baseExerciseName,
     this.baseDefaultWeightKg,
     this.baseWeightStepKg,
+    this.baseTargetSets,
+    this.baseTargetRepsMin,
+    this.baseTargetRepsMax,
+    this.baseDropCount,
     this.variants = const [],
     this.memberWeights = const {},
   });
@@ -115,6 +143,15 @@ class PlannedExercise {
   final double? baseDefaultWeightKg;
   final double? baseWeightStepKg;
 
+  /// The slot's planned prescription, kept verbatim like the base weight
+  /// while [targetSets] … [dropCount] follow the running member (a variant
+  /// inherits each one it leaves null). Null on slots built without a
+  /// template row; [prescriptionOf] then falls back to the current values.
+  final int? baseTargetSets;
+  final int? baseTargetRepsMin;
+  final int? baseTargetRepsMax;
+  final int? baseDropCount;
+
   /// The slot's variants in program order (empty for most slots). Loaded at
   /// start/resume; edits made mid-workout apply from the next start/resume.
   final List<SlotVariant> variants;
@@ -144,6 +181,10 @@ class PlannedExercise {
         name: baseExerciseName ?? exerciseName,
         defaultWeightKg: baseDefaultWeightKg ?? defaultWeightKg,
         weightStepKg: baseWeightStepKg,
+        targetSets: baseTargetSets,
+        targetRepsMin: baseTargetRepsMin,
+        targetRepsMax: baseTargetRepsMax,
+        dropCount: baseDropCount,
       ),
       for (final v in variants)
         if (seen.add(v.exerciseId)) v,
@@ -154,6 +195,37 @@ class PlannedExercise {
   /// logged — the same test the cursor uses ([completedSetsFor]).
   bool isCompleteIn(List<WorkoutSet> logged) =>
       completedSetsFor(logged, exerciseId) >= targetSets;
+
+  /// [m]'s planned prescription: its own value for each field it sets, else
+  /// the slot's plan (DEC-0007 #13).
+  SlotPrescription prescriptionOf(SlotVariant m) => (
+        sets: m.targetSets ?? baseTargetSets ?? targetSets,
+        repsMin: m.targetRepsMin ?? baseTargetRepsMin ?? targetRepsMin,
+        repsMax: m.targetRepsMax ?? baseTargetRepsMax ?? targetRepsMax,
+        drops: m.dropCount ?? baseDropCount ?? dropCount,
+      );
+
+  /// Sets logged on this slot under any member — and on the exercise it runs
+  /// as now when that is a "Change exercise" swap outside the members.
+  int slotDoneSets(List<WorkoutSet> logged) {
+    var n = 0;
+    for (final id in {for (final m in members) m.exerciseId, exerciseId}) {
+      n += completedSetsFor(logged, id);
+    }
+    return n;
+  }
+
+  /// Whether the switch to [m] is offered: not the member running now, and
+  /// the slot is not already complete under [m]'s own prescription — such a
+  /// switch would leave nothing to do (the review #2 rule, per member).
+  bool canSwitchTo(SlotVariant m, List<WorkoutSet> logged) =>
+      m.exerciseId != exerciseId &&
+      slotDoneSets(logged) < prescriptionOf(m).sets;
+
+  /// Whether the "Switch variant" entry is live: the running member still has
+  /// sets to do and at least one other member has some under its plan.
+  bool canSwitchVariant(List<WorkoutSet> logged) =>
+      !isCompleteIn(logged) && members.any((m) => canSwitchTo(m, logged));
 
   /// The weight [m] runs with in this session: the slot's current weight for
   /// the active member, a remembered one for a member switched away from, else
@@ -190,6 +262,10 @@ class PlannedExercise {
         baseExerciseName: v.exerciseName,
         baseDefaultWeightKg: v.pe.defaultWeightKg,
         baseWeightStepKg: v.pe.weightStepKg,
+        baseTargetSets: v.pe.targetSets,
+        baseTargetRepsMin: v.pe.targetRepsMin,
+        baseTargetRepsMax: v.pe.targetRepsMax,
+        baseDropCount: v.pe.dropCount,
         variants: [for (final x in variants) SlotVariant.fromView(x)],
       );
 
@@ -233,6 +309,10 @@ class PlannedExercise {
         baseExerciseName: baseExerciseName,
         baseDefaultWeightKg: baseDefaultWeightKg,
         baseWeightStepKg: baseWeightStepKg,
+        baseTargetSets: baseTargetSets,
+        baseTargetRepsMin: baseTargetRepsMin,
+        baseTargetRepsMax: baseTargetRepsMax,
+        baseDropCount: baseDropCount,
         variants: variants,
         memberWeights: memberWeights ?? this.memberWeights,
       );

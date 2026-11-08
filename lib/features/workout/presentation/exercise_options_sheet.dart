@@ -6,6 +6,7 @@ import '../../../core/theme/spec.dart';
 import '../../../core/util/weight.dart';
 import '../../../core/widgets/layout.dart';
 import '../domain/active_session.dart';
+import '../domain/workout_set.dart';
 
 /// The action a user picked from the in-workout exercise-options sheet. The
 /// sheet itself is pure UI — it returns the choice and the caller
@@ -31,6 +32,7 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
   required bool canAddSet,
   required bool canRemoveSet,
   bool canSwitchVariant = true,
+  bool slotDone = true,
 }) {
   return showModalBottomSheet<ExerciseOption>(
     context: context,
@@ -42,6 +44,7 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
         canAddSet: canAddSet,
         canRemoveSet: canRemoveSet,
         canSwitchVariant: canSwitchVariant,
+        slotDone: slotDone,
       ),
     ),
   );
@@ -53,15 +56,21 @@ class _ExerciseOptionsSheet extends StatelessWidget {
     required this.canAddSet,
     required this.canRemoveSet,
     required this.canSwitchVariant,
+    required this.slotDone,
   });
 
   final PlannedExercise exercise;
   final bool canAddSet;
   final bool canRemoveSet;
 
-  /// False once the slot's sets are all logged: there is nothing left to
-  /// carry over (SOW-14, review #2).
+  /// False once the slot's sets are all logged, or once the sets done meet
+  /// every other member's own plan: there is nothing left to switch to
+  /// (SOW-14, review #2; DEC-0007 #13).
   final bool canSwitchVariant;
+
+  /// Which of the two disabled cases it is: the running member's sets are all
+  /// logged (true), or only the other members' plans are met.
+  final bool slotDone;
 
   @override
   Widget build(BuildContext context) {
@@ -98,7 +107,9 @@ class _ExerciseOptionsSheet extends StatelessWidget {
             label: 'Switch variant',
             subtitle: canSwitchVariant
                 ? 'Now: ${exercise.exerciseName}'
-                : 'All sets done on ${exercise.exerciseName}',
+                : slotDone
+                ? 'All sets done on ${exercise.exerciseName}'
+                : 'No other variant has sets left',
             // Wraps instead of losing the name (QA VAR-14).
             subtitleMaxLines: 3,
             onTap: canSwitchVariant
@@ -148,28 +159,56 @@ class _ExerciseOptionsSheet extends StatelessWidget {
 }
 
 /// SOW-14: pick which member of the slot to run — its base or a variant. Lists
-/// base first, then the variants in program order, the current one marked.
-/// Returns the chosen `exerciseId`, or null when dismissed or the current one
-/// was tapped. Same `LsSheet` + option-row language as the options menu.
+/// base first, then the variants in program order, the current one marked;
+/// each row reads the member's own prescription (`4×6-8 · 40 KG`). A member
+/// under whose plan the slot is already complete is dimmed
+/// ([PlannedExercise.canSwitchTo]). Returns the chosen `exerciseId`, or null
+/// when dismissed or the current one was tapped. Same `LsSheet` + option-row
+/// language as the options menu.
 Future<String?> showVariantPickerSheet(
   BuildContext context, {
   required PlannedExercise exercise,
   required WeightUnit unit,
+  List<WorkoutSet> logged = const [],
 }) {
   return showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (ctx) => LsSheet(
-      child: _VariantPickerSheet(exercise: exercise, unit: unit),
+      child: _VariantPickerSheet(
+        exercise: exercise,
+        unit: unit,
+        logged: logged,
+      ),
     ),
   );
 }
 
 class _VariantPickerSheet extends StatelessWidget {
-  const _VariantPickerSheet({required this.exercise, required this.unit});
+  const _VariantPickerSheet({
+    required this.exercise,
+    required this.unit,
+    required this.logged,
+  });
   final PlannedExercise exercise;
   final WeightUnit unit;
+  final List<WorkoutSet> logged;
+
+  String _subtitle(SlotVariant m, bool current, bool enabled) {
+    final p = exercise.prescriptionOf(m);
+    final reps = p.repsMin == p.repsMax
+        ? '${p.repsMin}'
+        : '${p.repsMin}-${p.repsMax}';
+    return [
+      '${p.sets}×$reps',
+      WeightConv.format(exercise.sessionWeightOf(m), unit),
+      if (p.drops > 0) 'drop ×${p.drops}',
+      if (m.isBase) 'base',
+      if (current) 'current',
+      if (!current && !enabled) 'plan already met',
+    ].join(' · ');
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -185,7 +224,7 @@ class _VariantPickerSheet extends StatelessWidget {
         ),
         const SizedBox(height: LsGap.sub),
         Text(
-          'REMAINING SETS CARRY OVER',
+          'SETS DONE COUNT TOWARD EACH PLAN',
           style: LsType.monoMeta.copyWith(color: t.surface.text2, fontSize: 14),
         ),
         const SizedBox(height: LsGap.loose),
@@ -196,27 +235,26 @@ class _VariantPickerSheet extends StatelessWidget {
               children: [
                 for (var i = 0; i < members.length; i++) ...[
                   if (i > 0) const SizedBox(height: LsGap.sub),
-                  _OptionRow(
-                    key: ValueKey('variant-row-${members[i].exerciseId}'),
-                    icon: members[i].isBase
-                        ? Icons.fitness_center
-                        : Icons.alt_route,
-                    label: members[i].name,
-                    subtitle: [
-                      WeightConv.format(
-                          exercise.sessionWeightOf(members[i]), unit),
-                      if (members[i].isBase) 'base',
-                      if (members[i].exerciseId == exercise.exerciseId)
-                        'current',
-                    ].join(' · '),
-                    selected: members[i].exerciseId == exercise.exerciseId,
-                    onTap: () => Navigator.pop(
-                      context,
-                      members[i].exerciseId == exercise.exerciseId
+                  Builder(builder: (context) {
+                    final m = members[i];
+                    final current = m.exerciseId == exercise.exerciseId;
+                    final enabled =
+                        current || exercise.canSwitchTo(m, logged);
+                    return _OptionRow(
+                      key: ValueKey('variant-row-${m.exerciseId}'),
+                      icon: m.isBase ? Icons.fitness_center : Icons.alt_route,
+                      label: m.name,
+                      subtitle: _subtitle(m, current, enabled),
+                      subtitleMaxLines: 2,
+                      selected: current,
+                      onTap: !enabled
                           ? null
-                          : members[i].exerciseId,
-                    ),
-                  ),
+                          : () => Navigator.pop(
+                                context,
+                                current ? null : m.exerciseId,
+                              ),
+                    );
+                  }),
                 ],
               ],
             ),

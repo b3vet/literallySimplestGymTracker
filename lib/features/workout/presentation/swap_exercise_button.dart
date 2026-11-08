@@ -75,7 +75,8 @@ class SwapExerciseButton extends ConsumerWidget {
       exercise: exercise,
       canAddSet: exercise.targetSets < kMaxTargetSets,
       canRemoveSet: exercise.targetSets > 1,
-      canSwitchVariant: !exercise.isCompleteIn(logged),
+      canSwitchVariant: exercise.canSwitchVariant(logged),
+      slotDone: exercise.isCompleteIn(logged),
     );
     if (option == null || !context.mounted) return;
 
@@ -87,6 +88,7 @@ class SwapExerciseButton extends ConsumerWidget {
           context,
           exercise: exercise,
           unit: ref.read(settingsProvider).unit ?? WeightUnit.kg,
+          logged: logged,
         );
         if (exerciseId == null) return;
         await notifier.switchVariant(queueIdx, exerciseId);

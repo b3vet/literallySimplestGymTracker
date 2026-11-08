@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ls_workout_tracker/core/settings/settings_provider.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
+import 'package:ls_workout_tracker/features/workout/application/rest_timer_controller.dart';
+import 'package:ls_workout_tracker/features/workout/application/watch_snapshot.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:ls_workout_tracker/features/workout/domain/active_session.dart';
 import 'package:ls_workout_tracker/features/workout/domain/workout_set.dart';
@@ -36,20 +39,47 @@ void main() {
       defaultWeightKg: 20,
     );
 
-    PlannedExercise slot({required String on, required int target}) =>
-        PlannedExercise(
-          programExerciseId: 'pe',
-          exerciseId: on,
-          exerciseName: on,
-          targetSets: target,
-          targetRepsMin: 8,
-          targetRepsMax: 10,
-          defaultWeightKg: 60,
-          baseExerciseId: bar.exerciseId,
-          baseExerciseName: bar.name,
-          baseDefaultWeightKg: bar.defaultWeightKg,
-          variants: const [machine, db],
-        );
+    /// The slot runs as [on] with [target] sets now; the base plans [base]
+    /// sets, and the machine / DB variants plan their own when given (else
+    /// they inherit the base's).
+    PlannedExercise slot({
+      required String on,
+      required int target,
+      int base = 3,
+      int? machineSets,
+      int? dbSets,
+    }) => PlannedExercise(
+      programExerciseId: 'pe',
+      exerciseId: on,
+      exerciseName: on,
+      targetSets: target,
+      targetRepsMin: 8,
+      targetRepsMax: 10,
+      defaultWeightKg: 60,
+      baseExerciseId: bar.exerciseId,
+      baseExerciseName: bar.name,
+      baseDefaultWeightKg: bar.defaultWeightKg,
+      baseTargetSets: base,
+      baseTargetRepsMin: 8,
+      baseTargetRepsMax: 10,
+      baseDropCount: 0,
+      variants: [
+        SlotVariant(
+          variantId: machine.variantId,
+          exerciseId: machine.exerciseId,
+          name: machine.name,
+          defaultWeightKg: machine.defaultWeightKg,
+          targetSets: machineSets,
+        ),
+        SlotVariant(
+          variantId: db.variantId,
+          exerciseId: db.exerciseId,
+          name: db.name,
+          defaultWeightKg: db.defaultWeightKg,
+          targetSets: dbSets,
+        ),
+      ],
+    );
 
     var seq = 0;
     List<WorkoutSet> sets(Map<String, int> done) => [
@@ -95,7 +125,9 @@ void main() {
       );
     });
 
-    test('a set added on the variant travels with the slot', () {
+    // DEC-0007 #13: M's own plan governs, so a session "Add set" stays with
+    // the member it was made on (it used to travel: 4 here).
+    test('a set added on the variant stays there: the bar plan governs', () {
       // Plan 3, 1 on bar → machine target 2, + add set → 3, back to bar.
       expect(
         carryOverTargetSets(
@@ -103,7 +135,8 @@ void main() {
           'bar',
           sets({'bar': 1}),
         ),
-        4,
+        3,
+        reason: 'bar: 3 planned, 1 done → 2 left; the 1 done stays counted',
       );
     });
 
@@ -152,6 +185,106 @@ void main() {
         ),
         1,
       );
+    });
+
+    group('members with their own set counts (DEC-0007 #13)', () {
+      // max(doneOn(M), M.targetSets − Σ doneOn(others))
+      final table = <(String, PlannedExercise, String, Map<String, int>, int)>[
+        (
+          'base 3 → variant 4 after 1 on the base',
+          slot(on: 'bar', target: 3, machineSets: 4),
+          'machine',
+          {'bar': 1},
+          3,
+        ),
+        (
+          'base 4 → variant 2 after 3 on the base: complete',
+          slot(on: 'bar', target: 4, base: 4, machineSets: 2),
+          'machine',
+          {'bar': 3},
+          0,
+        ),
+        (
+          'variant 4 with 2 done → base 3 (1 done there)',
+          slot(on: 'machine', target: 3, machineSets: 4),
+          'bar',
+          {'bar': 1, 'machine': 2},
+          1,
+        ),
+        (
+          'base 3 → variant 2, nothing done',
+          slot(on: 'bar', target: 3, machineSets: 2),
+          'machine',
+          {},
+          2,
+        ),
+        (
+          'and back to the base: its own 3, not the variant\'s 2',
+          slot(on: 'machine', target: 2, machineSets: 2),
+          'bar',
+          {},
+          3,
+        ),
+        (
+          'variant 2 → variant 5 (DB) across three members',
+          slot(on: 'machine', target: 1, machineSets: 2, dbSets: 5),
+          'db',
+          {'bar': 1, 'machine': 1},
+          3,
+        ),
+        (
+          'an inheriting variant takes the base plan (4)',
+          slot(on: 'bar', target: 4, base: 4),
+          'machine',
+          {'bar': 1},
+          3,
+        ),
+        (
+          'over the new plan already: keep what the new member has',
+          slot(on: 'bar', target: 3, machineSets: 2),
+          'machine',
+          {'bar': 2, 'machine': 1},
+          1,
+        ),
+      ];
+      for (final (name, s, to, done, want) in table) {
+        test(name, () {
+          expect(carryOverTargetSets(s, to, sets(done)), want);
+        });
+      }
+
+      test('complete under the new member\'s plan: the switch is refused', () {
+        final s = slot(on: 'bar', target: 4, base: 4, machineSets: 2);
+        final done = sets({'bar': 3});
+        final m = s.members.firstWhere((m) => m.exerciseId == 'machine');
+        expect(s.canSwitchTo(m, done), isFalse);
+        expect(s.canSwitchTo(s.members.last, done), isTrue, reason: 'DB: 4');
+        expect(s.canSwitchVariant(done), isTrue);
+        expect(
+          slot(
+            on: 'bar',
+            target: 4,
+            base: 4,
+            machineSets: 2,
+            dbSets: 3,
+          ).canSwitchVariant(done),
+          isFalse,
+          reason: 'no other member has a set left under its plan',
+        );
+      });
+
+      test('round trips never drift', () {
+        final done = sets({'bar': 1, 'machine': 1});
+        var s = slot(on: 'bar', target: 3, machineSets: 4);
+        for (var i = 0; i < 3; i++) {
+          final toMachine = carryOverTargetSets(s, 'machine', done);
+          expect(toMachine, 3);
+          s = slot(on: 'machine', target: toMachine, machineSets: 4);
+          final back = carryOverTargetSets(s, 'bar', done);
+          expect(back, 2);
+          s = slot(on: 'bar', target: back, machineSets: 4);
+        }
+      });
     });
 
     test('a drop set counts once', () {
@@ -403,10 +536,12 @@ void main() {
     );
 
     // Review #3: the numbers alone used to decide. Plan 3 → machine 3, + add
-    // set → 4, log 1 on the machine → back to the bar: target 3 again, yet a
-    // machine set exists — the override (and its lineage) must stay.
-    test('back to the base keeps the override when a variant has a set, even '
-        'if the numbers match the plan', () async {
+    // set → 4, log 1 on the machine → back to the bar: a machine set exists,
+    // so the override (and its lineage) must stay. Since DEC-0007 #13 the bar
+    // runs its own plan: 3 − 1 done elsewhere = 2 (the machine's Add set
+    // stays with the machine).
+    test('back to the base keeps the override when a variant has a set, '
+        'after an Add set on the variant', () async {
       final c = await started();
       final ctrl = c.read(activeSessionProvider.notifier);
       await ctrl.switchVariant(0, machineId);
@@ -414,7 +549,7 @@ void main() {
       await log(c, 40);
       await ctrl.switchVariant(0, barId);
       final slot = session(c).queue.first;
-      expect(slot.targetSets, 3);
+      expect(slot.targetSets, 2);
       expect(slot.isOverridden, isTrue);
       expect(slot.previousExerciseId, machineId);
       final o = (await WorkoutDao(db).overridesForSession(session(c).sessionId))
@@ -574,6 +709,211 @@ void main() {
       await ctrl.revertSubstitution(0);
       expect(session(c).queue.first.members.length, 3);
       expect(slotId, session(c).queue.first.programExerciseId);
+    });
+  });
+
+  // DEC-0007 #13: a variant with its own sets, reps and drops.
+  group('switchVariant with per-variant prescriptions', () {
+    late Database db;
+    late String dayId;
+    late String barId;
+    late String smithId;
+    late String cableId;
+
+    setUp(() async {
+      db = await openTestDb();
+      final dao = ProgramDao(db);
+      final p = await dao.createProgram('P');
+      dayId = (await dao.createDay(p.id, 'Push')).id;
+      final pe = await dao.addProgramExercise(
+        programDayId: dayId,
+        exerciseName: 'Shoulder Press',
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 60,
+        weightStepKg: 2.5,
+      );
+      await dao.addProgramExercise(
+        programDayId: dayId,
+        exerciseName: 'Lateral Raise',
+        targetSets: 2,
+        targetRepsMin: 12,
+        targetRepsMax: 15,
+        defaultWeightKg: 10,
+      );
+      barId = pe.exerciseId;
+      smithId = (await dao.addVariant(
+        programExerciseId: pe.id,
+        exerciseName: 'Shoulder Press (Smith)',
+        defaultWeightKg: 50,
+        weightStepKg: 5,
+        targetSets: 4,
+        targetRepsMin: 6,
+        targetRepsMax: 8,
+        dropCount: 1,
+      )).exerciseId;
+      cableId = (await dao.addVariant(
+        programExerciseId: pe.id,
+        exerciseName: 'Shoulder Press (Cable)',
+        defaultWeightKg: 20,
+        targetSets: 2,
+        targetRepsMin: 12,
+        targetRepsMax: 15,
+        dropCount: 0,
+      )).exerciseId;
+    });
+    tearDown(() async => db.close());
+
+    Future<ProviderContainer> container() async {
+      SharedPreferences.setMockInitialValues({'settings.live_activity': false});
+      final prefs = await SharedPreferences.getInstance();
+      final c = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          sharedPreferencesProvider.overrideWithValue(prefs),
+        ],
+      );
+      addTearDown(c.dispose);
+      await c.read(activeSessionProvider.future);
+      return c;
+    }
+
+    ActiveSession session(ProviderContainer c) =>
+        c.read(activeSessionProvider).value!;
+
+    Future<void> logBar(ProviderContainer c) => c
+        .read(activeSessionProvider.notifier)
+        .logSet(reps: 8, weightKg: 60, rir: 1);
+
+    Future<void> logDropSet(ProviderContainer c) => c
+        .read(activeSessionProvider.notifier)
+        .logSetGroup(const [
+          SetEntry(reps: 7, weightKg: 50, rir: 1),
+          SetEntry(reps: 8, weightKg: 35),
+        ]);
+
+    test('the variant\'s own sets, reps and drops apply; the watch snapshot '
+        'and a resume agree', () async {
+      final c = await container();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.start(dayId);
+      await logBar(c); // 1 of the bar's 3
+      await ctrl.switchVariant(0, smithId);
+
+      final slot = session(c).queue.first;
+      expect(slot.exerciseId, smithId);
+      expect(slot.targetSets, 3, reason: 'smith 4 − 1 done on the bar');
+      expect(slot.targetRepsMin, 6);
+      expect(slot.targetRepsMax, 8);
+      expect(slot.dropCount, 1);
+      expect(slot.isDropSet, isTrue, reason: 'the log sheet logs a drop set');
+      expect(slot.defaultWeightKg, 50);
+      expect(slot.weightStepKg, 5);
+      expect(session(c).cursor.exerciseIdx, 0);
+      expect(session(c).cursor.setIdx, 0, reason: 'nothing on the smith yet');
+
+      final o = (await WorkoutDao(
+        db,
+      ).overridesForSession(session(c).sessionId)).single;
+      expect(
+        [o.targetSets, o.targetRepsMin, o.targetRepsMax, o.dropCount],
+        [3, 6, 8, 1],
+      );
+
+      // The watch counts and logs off the snapshot: the variant's numbers.
+      final snap = buildWatchSnapshot(
+        session: session(c),
+        rest: const RestTimerState(),
+        settings: c.read(settingsProvider),
+      );
+      final w = snap.queue.first;
+      expect(w.exerciseId, smithId);
+      expect(w.name, 'Shoulder Press (Smith)');
+      expect(
+        [w.targetSets, w.targetRepsMin, w.targetRepsMax, w.dropCount],
+        [3, 6, 8, 1],
+      );
+      expect(snap.cursorExerciseIdx, 0);
+
+      // A resume rebuilds the same slot.
+      final resumed = session(await container()).queue.first;
+      expect(
+        [
+          resumed.exerciseId,
+          resumed.targetSets,
+          resumed.targetRepsMin,
+          resumed.targetRepsMax,
+          resumed.dropCount,
+        ],
+        [smithId, 3, 6, 8, 1],
+      );
+
+      // 3 drop sets (a drop set counts once) finish the slot.
+      for (var i = 0; i < 3; i++) {
+        await logDropSet(c);
+      }
+      expect(session(c).cursor.exerciseIdx, 1, reason: '1 bar + 3 smith');
+      expect(cursorAfter(session(c).queue, session(c).loggedSets).exerciseIdx, 1);
+      expect(
+        buildWatchSnapshot(
+          session: session(c),
+          rest: const RestTimerState(),
+          settings: c.read(settingsProvider),
+        ).cursorExerciseIdx,
+        1,
+      );
+    });
+
+    test('back to the base: its own reps and drops; nothing logged off the '
+        'base drops the override', () async {
+      final c = await container();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.start(dayId);
+      await ctrl.switchVariant(0, smithId);
+      expect(session(c).queue.first.targetSets, 4);
+      await ctrl.switchVariant(0, barId);
+      final slot = session(c).queue.first;
+      expect(
+        [
+          slot.targetSets,
+          slot.targetRepsMin,
+          slot.targetRepsMax,
+          slot.dropCount,
+          slot.defaultWeightKg,
+          slot.weightStepKg,
+        ],
+        [3, 8, 10, 0, 60, 2.5],
+      );
+      expect(slot.isOverridden, isFalse);
+      expect(
+        await WorkoutDao(db).overridesForSession(session(c).sessionId),
+        isEmpty,
+      );
+    });
+
+    test('a smaller variant plan: on the cable 2 after 1 on the bar, and a '
+        'plan already met is refused', () async {
+      final c = await container();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.start(dayId);
+      await logBar(c);
+      await ctrl.switchVariant(0, cableId);
+      expect(session(c).queue.first.targetSets, 1, reason: 'cable 2 − 1');
+      expect(session(c).queue.first.targetRepsMin, 12);
+      await ctrl.switchVariant(0, barId);
+      expect(session(c).queue.first.targetSets, 3, reason: 'bar: own 3');
+      await logBar(c); // 2 done on the bar: the cable's 2 are met
+
+      final before = session(c);
+      final slot = before.queue.first;
+      final cable = slot.members.firstWhere((m) => m.exerciseId == cableId);
+      expect(slot.canSwitchTo(cable, before.loggedSets), isFalse);
+      await ctrl.switchVariant(0, cableId);
+      expect(identical(session(c), before), isTrue, reason: 'ignored');
+
+      await ctrl.switchVariant(0, smithId);
+      expect(session(c).queue.first.targetSets, 2, reason: 'smith 4 − 2');
     });
   });
 }

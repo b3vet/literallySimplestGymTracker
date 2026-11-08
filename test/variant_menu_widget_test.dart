@@ -165,9 +165,10 @@ void main() {
       expect(find.byKey(ValueKey('variant-row-$id')), findsOneWidget);
     }
     expect(find.text('SHOULDER PRESS'), findsWidgets);
-    expect(find.text('60 KG · BASE'), findsOneWidget);
-    expect(find.text('40 KG · CURRENT'), findsOneWidget);
-    expect(find.text('22.5 KG'), findsOneWidget);
+    expect(find.text('SETS DONE COUNT TOWARD EACH PLAN'), findsOneWidget);
+    expect(find.text('3×8-10 · 60 KG · BASE'), findsOneWidget);
+    expect(find.text('3×8-10 · 40 KG · CURRENT'), findsOneWidget);
+    expect(find.text('3×8-10 · 22.5 KG'), findsOneWidget);
     expect(
       find.descendant(
         of: find.byKey(const ValueKey('variant-row-machine')),
@@ -224,7 +225,7 @@ void main() {
     expect(find.text('ALL SETS DONE ON SHOULDER PRESS'), findsOneWidget);
     await tester.tap(find.text('SWITCH VARIANT'));
     await tester.pumpAndSettle();
-    expect(find.text('REMAINING SETS CARRY OVER'), findsNothing);
+    expect(find.text('SETS DONE COUNT TOWARD EACH PLAN'), findsNothing);
     expect(fake.calls, isEmpty);
   });
 
@@ -240,9 +241,108 @@ void main() {
     );
     await tester.tap(find.text('SWITCH VARIANT'));
     await tester.pumpAndSettle();
-    expect(find.text('62.5 KG · BASE · CURRENT'), findsOneWidget);
-    expect(find.text('45 KG'), findsOneWidget, reason: 'visited earlier');
-    expect(find.text('22.5 KG'), findsOneWidget, reason: 'not visited: plan');
+    expect(find.text('3×8-10 · 62.5 KG · BASE · CURRENT'), findsOneWidget);
+    expect(
+      find.text('3×8-10 · 45 KG'),
+      findsOneWidget,
+      reason: 'visited earlier',
+    );
+    expect(
+      find.text('3×8-10 · 22.5 KG'),
+      findsOneWidget,
+      reason: 'not visited: plan',
+    );
+  });
+
+  // DEC-0007 #13: each row reads the member's own prescription; a member
+  // whose plan the sets done already meet is dimmed and does nothing.
+  testWidgets('rows show each member\'s plan; a met plan is dimmed', (
+    tester,
+  ) async {
+    const smith = SlotVariant(
+      variantId: 'v3',
+      exerciseId: 'smith',
+      name: 'Shoulder Press (Smith)',
+      defaultWeightKg: 50,
+      targetSets: 4,
+      targetRepsMin: 6,
+      targetRepsMax: 8,
+      dropCount: 1,
+    );
+    const cable = SlotVariant(
+      variantId: 'v4',
+      exerciseId: 'cable',
+      name: 'Shoulder Press (Cable)',
+      defaultWeightKg: 20,
+      targetSets: 2,
+      targetRepsMin: 12,
+      targetRepsMax: 12,
+    );
+    await pump(
+      tester,
+      _slot(variants: const [smith, cable]),
+      logged: [
+        for (var i = 0; i < 2; i++)
+          WorkoutSet(
+            id: 's$i',
+            sessionId: 's',
+            exerciseId: 'bar',
+            setIndex: i,
+            reps: 8,
+            weightKg: 60,
+            rir: 1,
+            loggedAt: DateTime(2026),
+          ),
+      ],
+    );
+    expect(find.text('NOW: SHOULDER PRESS'), findsOneWidget);
+    await tester.tap(find.text('SWITCH VARIANT'));
+    await tester.pumpAndSettle();
+    expect(find.text('4×6-8 · 50 KG · DROP ×1'), findsOneWidget);
+    expect(
+      find.text('2×12 · 20 KG · PLAN ALREADY MET'),
+      findsOneWidget,
+      reason: '2 done on the bar meet the cable\'s 2',
+    );
+    await tester.tap(find.byKey(const ValueKey('variant-row-cable')));
+    await tester.pumpAndSettle();
+    expect(fake.calls, isEmpty);
+    await tester.tap(find.byKey(const ValueKey('variant-row-smith')));
+    await tester.pumpAndSettle();
+    expect(fake.calls, [(0, 'smith')]);
+  });
+
+  testWidgets('the entry is dimmed when no other member has sets left', (
+    tester,
+  ) async {
+    const cable = SlotVariant(
+      variantId: 'v4',
+      exerciseId: 'cable',
+      name: 'Shoulder Press (Cable)',
+      defaultWeightKg: 20,
+      targetSets: 2,
+    );
+    await pump(
+      tester,
+      _slot(variants: const [cable]),
+      logged: [
+        for (var i = 0; i < 2; i++)
+          WorkoutSet(
+            id: 's$i',
+            sessionId: 's',
+            exerciseId: 'bar',
+            setIndex: i,
+            reps: 8,
+            weightKg: 60,
+            rir: 1,
+            loggedAt: DateTime(2026),
+          ),
+      ],
+    );
+    expect(find.text('NO OTHER VARIANT HAS SETS LEFT'), findsOneWidget);
+    await tester.tap(find.text('SWITCH VARIANT'));
+    await tester.pumpAndSettle();
+    expect(find.text('SWITCH VARIANT'), findsOneWidget, reason: 'no picker');
   });
 
   // QA VAR-14 observation: the dimmed row's subtitle was ellipsized.

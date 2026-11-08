@@ -66,41 +66,43 @@ Cursor cursorAfter(List<PlannedExercise> queue, List<WorkoutSet> loggedSets) {
 }
 
 /// Set target for [toExerciseId] when a slot switches between its members
-/// (base, variants — and whatever it runs as now), so the slot's remaining
-/// sets carry over instead of restarting (SOW-14). Pure + top-level for tests.
+/// (base, variants — and whatever it runs as now), so the sets already done on
+/// the slot count instead of restarting (SOW-14). Pure + top-level for tests.
 ///
-/// The slot's total is its current target plus every set already done on the
-/// OTHER members; the new member's target is that total minus what was done on
-/// every member except itself. Plan 3, 1 done on the machine, switch to the
-/// bar → bar target 2. Completed sets count distinct groups, so a drop set
-/// counts once.
+/// Switching to member M means "do M's prescription for the rest of this slot"
+/// (DEC-0007 #13): M's planned set count — its own, or the slot's when it
+/// inherits — minus every set already done on the OTHER members, and never
+/// below what M itself already has:
 ///
-/// A slot that is already complete moves NO pending set over: the new member's
-/// target is just what it already has (possibly 0). There is no floor of 1 —
-/// a floor would add a set on every round trip (review #2: plan 3, all done,
-/// away and back → 4). The menu also disables the switch on a complete slot
-/// and [ActiveWorkoutController.switchVariant] ignores it.
+///     max(doneOn(M), M.targetSets − Σ doneOn(other members))
+///
+/// Base 3 → variant 4 with 1 done on the base → 3 on the variant; base 4 →
+/// variant 2 with 3 done → 0: the slot counts as complete under M's plan,
+/// which [PlannedExercise.canSwitchTo] refuses up front (review #2: no
+/// inflation on a complete slot). The result depends only on the logged sets
+/// and M's plan, so round trips cannot drift; a session "Add set" stays with
+/// the member it was made on. Completed sets count distinct groups, so a drop
+/// set counts once.
 int carryOverTargetSets(
   PlannedExercise slot,
   String toExerciseId,
   List<WorkoutSet> logged,
 ) {
-  final members = <String>{
+  SlotVariant? to;
+  for (final m in slot.members) {
+    if (m.exerciseId == toExerciseId) to = m;
+  }
+  final planned = to == null ? slot.targetSets : slot.prescriptionOf(to).sets;
+  final others = <String>{
     for (final m in slot.members) m.exerciseId,
     slot.exerciseId,
-    toExerciseId,
-  };
-  var total = slot.targetSets;
+  }..remove(toExerciseId);
   var doneElsewhere = 0;
-  for (final m in members) {
-    final done = completedSetsFor(logged, m);
-    if (m != slot.exerciseId) total += done;
-    if (m != toExerciseId) doneElsewhere += done;
+  for (final id in others) {
+    doneElsewhere += completedSetsFor(logged, id);
   }
-  final target = total - doneElsewhere;
-  // Below what's done on the new member only when the current one is over its
-  // target: keep the logged sets, add nothing.
   final doneOnNew = completedSetsFor(logged, toExerciseId);
+  final target = planned - doneElsewhere;
   return target < doneOnNew ? doneOnNew : target;
 }
 
@@ -920,9 +922,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   }
 
   /// Switch a slot to one of its members — the base or a variant (SOW-14).
-  /// One tap from the exercise-options menu, no confirm. The variant's own
-  /// weight and step apply (step falls back to the slot's); sets, reps and
-  /// drops stay the slot's, and the remaining set count carries over
+  /// One tap from the exercise-options menu, no confirm. The member's own
+  /// prescription applies for the rest of the slot (DEC-0007 #13): its weight
+  /// and step (step falls back to the slot's), its rep range and drop count,
+  /// and its set count less the sets done on the other members
   /// ([carryOverTargetSets]). Persisted as a session override like a swap, with
   /// `previous_exercise_id` rotated so the "PREVIOUSLY N SETS ON X" banner
   /// works. Going back to the base with the plan's numbers restored drops the
@@ -943,7 +946,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       if (m.exerciseId == exerciseId) member = m;
     }
     if (member == null) return;
+    // Nor does one that is already complete under the member's own plan.
+    if (!slot.canSwitchTo(member, current.loggedSets)) return;
 
+    final plan = slot.prescriptionOf(member);
     final target = carryOverTargetSets(slot, exerciseId, current.loggedSets);
     // Remember what the member we leave ran with (a "Change exercise" weight
     // edit included), and come back to it rather than to the plan (review #3).
@@ -971,30 +977,35 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
           if (!m.isBase) m.exerciseId,
         slot.exerciseId,
       }.any((id) => completedSetsFor(current.loggedSets, id) > 0);
+      // Compared against the fresh plan row, so a plan edited mid-workout
+      // keeps the override too.
       final planned =
           await _programDao.listProgramExercises(current.programDayId);
-      ProgramExerciseView? plan;
+      ProgramExerciseView? row;
       for (final v in planned) {
-        if (v.pe.id == slot.programExerciseId) plan = v;
+        if (v.pe.id == slot.programExerciseId) row = v;
       }
-      if (plan != null &&
+      if (row != null &&
           !loggedOffBase &&
-          target == plan.pe.targetSets &&
-          slot.targetRepsMin == plan.pe.targetRepsMin &&
-          slot.targetRepsMax == plan.pe.targetRepsMax &&
-          slot.dropCount == plan.pe.dropCount &&
-          weight == plan.pe.defaultWeightKg &&
-          step == plan.pe.weightStepKg) {
+          target == row.pe.targetSets &&
+          plan.repsMin == row.pe.targetRepsMin &&
+          plan.repsMax == row.pe.targetRepsMax &&
+          plan.drops == row.pe.dropCount &&
+          weight == row.pe.defaultWeightKg &&
+          step == row.pe.weightStepKg) {
         await _workoutDao.deleteOverride(
           sessionId: current.sessionId,
           programExerciseId: slot.programExerciseId,
         );
         final restored = slot.copyWith(
-          exerciseId: plan.pe.exerciseId,
-          exerciseName: plan.exerciseName,
-          targetSets: plan.pe.targetSets,
-          defaultWeightKg: plan.pe.defaultWeightKg,
-          weightStepKg: plan.pe.weightStepKg,
+          exerciseId: row.pe.exerciseId,
+          exerciseName: row.exerciseName,
+          targetSets: row.pe.targetSets,
+          targetRepsMin: row.pe.targetRepsMin,
+          targetRepsMax: row.pe.targetRepsMax,
+          dropCount: row.pe.dropCount,
+          defaultWeightKg: row.pe.defaultWeightKg,
+          weightStepKg: row.pe.weightStepKg,
           isOverridden: false,
           previousExerciseId: null,
           memberWeights: weights,
@@ -1010,12 +1021,12 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       exerciseId: member.exerciseId,
       previousExerciseId: slot.exerciseId,
       targetSets: target,
-      targetRepsMin: slot.targetRepsMin,
-      targetRepsMax: slot.targetRepsMax,
+      targetRepsMin: plan.repsMin,
+      targetRepsMax: plan.repsMax,
       defaultWeightKg: weight,
       weightStepKg: step,
       skipped: false,
-      dropCount: slot.dropCount,
+      dropCount: plan.drops,
     );
     _replaceSlot(
       current,
@@ -1024,6 +1035,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         exerciseId: member.exerciseId,
         exerciseName: member.name,
         targetSets: target,
+        targetRepsMin: plan.repsMin,
+        targetRepsMax: plan.repsMax,
+        dropCount: plan.drops,
         defaultWeightKg: weight,
         weightStepKg: step,
         isOverridden: true,
