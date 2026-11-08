@@ -1,6 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ls_workout_tracker/core/db/migrations.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
 import 'package:ls_workout_tracker/features/workout/application/rest_timer_controller.dart';
@@ -8,6 +7,8 @@ import 'package:ls_workout_tracker/main.dart'
     show databaseProvider, sharedPreferencesProvider;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'support/test_db.dart';
 
 /// SOW-03 §5: a running rest must be cleared — in memory AND on disk — when the
 /// workout finishes or is discarded. Otherwise the persisted end-time (added by
@@ -19,27 +20,7 @@ void main() {
 
   setUpAll(sqfliteFfiInit);
 
-  Future<Database> openDb() => databaseFactoryFfi.openDatabase(
-        inMemoryDatabasePath,
-        options: OpenDatabaseOptions(
-          version: 6,
-          onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-          onCreate: (db, _) async {
-            final b = db.batch();
-            for (final stmt in [
-              ...schemaV1,
-              ...schemaV2Up,
-              ...schemaV3Up,
-              ...schemaV4Up,
-              ...schemaV5Up,
-              ...schemaV6Up,
-            ]) {
-              b.execute(stmt);
-            }
-            await b.commit(noResult: true);
-          },
-        ),
-      );
+  Future<Database> openDb() => openTestDb();
 
   Future<void> settle() => Future<void>.delayed(Duration.zero);
 

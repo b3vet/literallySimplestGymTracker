@@ -154,7 +154,20 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
 
   Future<ActiveSession?> _resumeIfPossible() async {
     final session = await _workoutDao.findActiveSession();
-    if (session == null || session.programDayId == null) return null;
+    if (session == null) return null;
+    if (session.programDayId == null) {
+      // Its program/day was deleted mid-workout (the delete detaches sessions
+      // rather than failing). There is no plan to rebuild a queue from, and
+      // leaving it `active` would block every new workout. Keep whatever was
+      // logged — complete it so the sets stay in History — else drop it.
+      final sets = await _workoutDao.setsForSession(session.id);
+      if (sets.isEmpty) {
+        await _workoutDao.abandonSession(session.id);
+      } else {
+        await _workoutDao.completeSession(session.id);
+      }
+      return null;
+    }
 
     final planned = await _programDao.listProgramExercises(session.programDayId!);
     if (planned.isEmpty) {

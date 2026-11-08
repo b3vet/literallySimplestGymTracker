@@ -38,8 +38,22 @@ class ProgramDao {
     );
   }
 
+  /// Delete a program with its days and slots (cascade). Workouts logged
+  /// against any of its days are KEPT and detached (`program_day_id = NULL`)
+  /// inside the same transaction — `workout_sessions.program_day_id` has no
+  /// `ON DELETE`, so without this the delete fails on the foreign key as soon
+  /// as one workout was logged. History then shows those sessions as plain
+  /// workouts; their sets, PRs and Stats are untouched (DEC-0007 H5).
   Future<void> deleteProgram(String id) async {
-    await _db.delete('programs', where: 'id = ?', whereArgs: [id]);
+    await _db.transaction((txn) async {
+      await txn.rawUpdate(
+        'UPDATE workout_sessions SET program_day_id = NULL '
+        'WHERE program_day_id IN '
+        '(SELECT id FROM program_days WHERE program_id = ?)',
+        [id],
+      );
+      await txn.delete('programs', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   Future<Program?> findProgram(String id) async {
@@ -91,8 +105,18 @@ class ProgramDao {
     );
   }
 
+  /// Delete a day with its slots (cascade), keeping and detaching any workouts
+  /// logged against it — see [deleteProgram].
   Future<void> deleteDay(String id) async {
-    await _db.delete('program_days', where: 'id = ?', whereArgs: [id]);
+    await _db.transaction((txn) async {
+      await txn.update(
+        'workout_sessions',
+        {'program_day_id': null},
+        where: 'program_day_id = ?',
+        whereArgs: [id],
+      );
+      await txn.delete('program_days', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   Future<void> reorderDays(String programId, List<String> dayIdsInOrder) async {
