@@ -118,6 +118,33 @@ class _SummaryBodyState extends ConsumerState<_SummaryBody> {
   final _expanded = <String>{};
   bool _allExpanded = false;
 
+  /// The UNDO snackbar this summary showed, while it is on screen. It must not
+  /// outlive the summary: an UNDO tapped on the next workout's screen would
+  /// silently revert this session's program updates (QA observation, D-0011).
+  ScaffoldMessengerState? _snackMessenger;
+  bool _snackOpen = false;
+
+  void _trackSnack(
+    ScaffoldMessengerState messenger,
+    ScaffoldFeatureController<SnackBar, SnackBarClosedReason> controller,
+  ) {
+    _snackMessenger = messenger;
+    _snackOpen = true;
+    controller.closed.then((_) {
+      if (identical(_snackMessenger, messenger)) _snackOpen = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    // Leaving the summary route: take its snackbar with it.
+    final messenger = _snackMessenger;
+    if (_snackOpen && messenger != null && messenger.mounted) {
+      messenger.hideCurrentSnackBar();
+    }
+    super.dispose();
+  }
+
   void _toggle(String exerciseId) {
     setState(() {
       if (!_expanded.remove(exerciseId)) _expanded.add(exerciseId);
@@ -804,20 +831,18 @@ class _ProgramUpdatesBlock extends ConsumerWidget {
   Future<void> _batch(BuildContext context, WidgetRef ref,
       {required bool undo}) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
     final n = undo ? await ctrl.undoAll() : await ctrl.applyAll();
     if (n == 0) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(undo
-            ? '$n program ${n == 1 ? 'update' : 'updates'} undone'
-            : '$n program ${n == 1 ? 'target' : 'targets'} updated'),
-        duration: const Duration(seconds: 5),
-        action: undo
-            ? null
-            : SnackBarAction(label: 'UNDO', onPressed: ctrl.undoAll),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: undo
+          ? '$n program ${n == 1 ? 'update' : 'updates'} undone'
+          : '$n program ${n == 1 ? 'target' : 'targets'} updated',
+      onUndo: undo ? null : ctrl.undoAll,
+    );
   }
 }
 
@@ -984,6 +1009,7 @@ class _ProgramUpdateRow extends ConsumerWidget {
 
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
     final conflict = await ctrl.applyOne(update.exerciseId);
     if (conflict != null) {
@@ -992,16 +1018,12 @@ class _ProgramUpdateRow extends ConsumerWidget {
     }
     final proposed =
         WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(_snackText(update, proposed, null)),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => ctrl.undoOne(update.exerciseId),
-        ),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: _snackText(update, proposed, null),
+      onUndo: () => ctrl.undoOne(update.exerciseId),
+    );
   }
 }
 
@@ -1525,6 +1547,7 @@ class _InlineProgramAction extends ConsumerWidget {
 
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
     final conflict = await ctrl.applyOne(update.exerciseId);
     if (conflict != null) {
@@ -1532,16 +1555,12 @@ class _InlineProgramAction extends ConsumerWidget {
       return;
     }
     final weight = WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(_snackText(update, weight, dayName)),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => ctrl.undoOne(update.exerciseId),
-        ),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: _snackText(update, weight, dayName),
+      onUndo: () => ctrl.undoOne(update.exerciseId),
+    );
   }
 }
 
@@ -1726,6 +1745,30 @@ String _formatDuration(Duration d) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  PROGRAM-UPDATE WORDING (shared by the card and the inline action)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// Show an UNDO snackbar for the summary: a normal, finite one (`persist:
+/// false` — Flutter otherwise keeps any snackbar with an action on screen
+/// until it is tapped), tracked by the summary so leaving the route dismisses
+/// it. [summary] is looked up BEFORE the caller's awaits.
+void _showUndoSnack(
+  _SummaryBodyState? summary,
+  ScaffoldMessengerState messenger, {
+  required String text,
+  required VoidCallback? onUndo,
+}) {
+  messenger.clearSnackBars();
+  final controller = messenger.showSnackBar(SnackBar(
+    content: Text(text),
+    duration: const Duration(seconds: 5),
+    persist: false,
+    action: onUndo == null
+        ? null
+        : SnackBarAction(label: 'UNDO', onPressed: onUndo),
+  ));
+  if (summary != null && summary.mounted) {
+    summary._trackSnack(messenger, controller);
+  }
+}
 
 /// [s] with its spaces made non-breaking, so a weight like "42.5 KG" never
 /// wraps between the number and the unit.

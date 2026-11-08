@@ -3,6 +3,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:ls_workout_tracker/core/theme/app_theme.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
@@ -14,6 +15,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'support/test_db.dart';
 
+/// Summary screen widget tests (D-0011).
+///
 /// QA VAR-08: the summary's variant raise card ellipsized the variant name and
 /// the proposed weight ("SHOULDER PRESS (…", "40 → 42…", or "42.5 →" with the
 /// value gone). Rendered with the app's real fonts (the default test font
@@ -109,14 +112,26 @@ void main() {
           databaseProvider.overrideWithValue(db),
           sharedPreferencesProvider.overrideWithValue(prefs),
         ],
-        child: MaterialApp(
+        child: MaterialApp.router(
+          routerConfig: GoRouter(
+            initialLocation: '/summary',
+            routes: [
+              GoRoute(
+                path: '/',
+                builder: (_, _) => const Scaffold(body: Text('HOME')),
+              ),
+              GoRoute(
+                path: '/summary',
+                builder: (_, _) => SummaryScreen(sessionId: sessionId),
+              ),
+            ],
+          ),
           builder: (context, child) => LsTheme(
             surface: light ? lsLight : lsDark,
             accent: lsAccentSpec(LsAccent.red),
             brightness: light ? Brightness.light : Brightness.dark,
             child: child!,
           ),
-          home: SummaryScreen(sessionId: sessionId),
         ),
       ),
     );
@@ -196,4 +211,56 @@ void main() {
       );
     }
   }
+
+  // QA observation (D-0011): after APPLY ALL the UNDO snackbar was still on
+  // the NEXT workout's screen minutes later — Flutter keeps a snackbar with an
+  // action until it's tapped — where UNDO would silently revert this
+  // session's program updates.
+  group('UNDO snackbar', () {
+    Future<void> apply(WidgetTester tester) async {
+      await tester.tap(find.text('VARIANT TARGET'));
+      for (var i = 0; i < 5; i++) {
+        await tester.runAsync(
+          () => Future<void>.delayed(const Duration(milliseconds: 30)),
+        );
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('UNDO'), findsOneWidget);
+    }
+
+    Future<void> done(WidgetTester tester) async {
+      await tester.pumpWidget(const SizedBox());
+      await tester.runAsync(() => db.close());
+    }
+
+    testWidgets('times out like a normal snackbar, VoiceOver on too', (
+      tester,
+    ) async {
+      tester.platformDispatcher.accessibilityFeaturesTestValue =
+          const FakeAccessibilityFeatures(accessibleNavigation: true);
+      addTearDown(
+        tester.platformDispatcher.clearAccessibilityFeaturesTestValue,
+      );
+      final sid = await seed(tester, 'Shoulder Press (Machine)');
+      await pump(tester, sid, light: false);
+      await apply(tester);
+      await tester.pump(const Duration(seconds: 6));
+      await tester.pumpAndSettle();
+      expect(find.byType(SnackBar), findsNothing);
+      await done(tester);
+    });
+
+    testWidgets('leaving the summary takes it along', (tester) async {
+      final sid = await seed(tester, 'Shoulder Press (Machine)');
+      await pump(tester, sid, light: false);
+      await apply(tester);
+      await tester.tap(find.bySemanticsLabel('Done').first);
+      for (var i = 0; i < 10; i++) {
+        await tester.pump(const Duration(milliseconds: 100)); // 1 s < 5 s
+      }
+      expect(find.text('HOME'), findsOneWidget);
+      expect(find.text('UNDO'), findsNothing);
+      await done(tester);
+    });
+  });
 }
