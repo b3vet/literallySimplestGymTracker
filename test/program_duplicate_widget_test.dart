@@ -179,4 +179,51 @@ void main() {
     );
     await closeDb(tester);
   });
+
+  // SOW-14 day rule (D-0011): adding a slot whose base is already a variant
+  // on the day is refused with a message; nothing is written.
+  testWidgets('day editor: a base that is a variant on the day is refused', (
+    tester,
+  ) async {
+    await seed(tester);
+    await tester.runAsync(() async {
+      final bench = (await dao.listProgramExercises(dayId)).single;
+      await dao.addVariant(
+        programExerciseId: bench.pe.id,
+        exerciseName: 'Machine Press',
+        defaultWeightKg: 60,
+      );
+    });
+    tester.view.physicalSize = const Size(1170, 2532);
+    tester.view.devicePixelRatio = 3;
+    addTearDown(tester.view.reset);
+    // The test font draws every glyph as a full em square, so the edit
+    // sheet's chips overflow by a few px in tests only (see
+    // variants_editor_widget_test). Ignore overflow reports — only those.
+    final origOnError = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains('overflowed')) return;
+      origOnError?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = origOnError);
+    await pumpAt(tester, '/programs/$programId/days/$dayId');
+
+    await tester.tap(find.text('+ EXERCISE'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'Machine Press');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await settleDb(tester);
+    await tester.ensureVisible(find.text('SAVE'));
+    await tester.tap(find.text('SAVE'));
+    await settleDb(tester);
+
+    expect(
+      find.text('MACHINE PRESS is already a variant of another exercise on '
+          'this day.'),
+      findsOneWidget,
+    );
+    final slots = (await tester.runAsync(() => dao.listProgramExercises(dayId)))!;
+    expect(slots.map((v) => v.exerciseName), ['Bench Press']);
+    await closeDb(tester);
+  });
 }

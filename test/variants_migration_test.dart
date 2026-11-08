@@ -5,6 +5,7 @@ import 'package:ls_workout_tracker/core/db/database.dart';
 import 'package:ls_workout_tracker/core/db/maintenance.dart';
 import 'package:ls_workout_tracker/core/db/migrations.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
+import 'package:ls_workout_tracker/features/programs/domain/program_exercise.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -92,9 +93,14 @@ void main() {
     final wDao = WorkoutDao(db);
     final prog = await pDao.createProgram('PPL');
     final day = await pDao.createDay(prog.id, 'Push');
-    final pe = await pDao.addProgramExercise(
+    // Written as 1.4.1 writes it: the 1.5.0 DAO consults the v7 variants
+    // table (SOW-14 day rule), which a v6 file doesn't have.
+    final bench = await pDao.findOrCreateExercise('Bench Press');
+    final pe = ProgramExercise(
+      id: 'pe-v6',
       programDayId: day.id,
-      exerciseName: 'Bench Press',
+      exerciseId: bench.id,
+      position: 0,
       targetSets: 3,
       targetRepsMin: 5,
       targetRepsMax: 8,
@@ -102,6 +108,7 @@ void main() {
       weightStepKg: 2.5,
       dropCount: 1,
     );
+    await db.insert('program_exercises', pe.toRow());
     final swap = await pDao.findOrCreateExercise('Machine Press');
     final s = await wDao.startSession(day.id);
     await wDao.insertSet(

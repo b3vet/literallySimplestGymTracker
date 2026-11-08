@@ -207,6 +207,11 @@ class ProgramDao {
       whereArgs: [fromDayId],
       orderBy: 'position ASC',
     );
+    // SOW-14 day rule: a variant that collides with a base on the day, or
+    // repeats an earlier variant, is not copied (the base / first one wins) —
+    // the same rows [listVariantsForDay] hides, so the copy looks identical.
+    final bases = {for (final s in slots) s['exercise_id'] as String};
+    final usedVariants = <String>{};
     for (final slot in slots) {
       final newSlotId = _uuid.v4();
       final row = Map<String, Object?>.of(slot)
@@ -220,6 +225,10 @@ class ProgramDao {
         orderBy: 'position ASC',
       );
       for (final v in variants) {
+        final exerciseId = v['exercise_id'] as String;
+        if (bases.contains(exerciseId) || !usedVariants.add(exerciseId)) {
+          continue;
+        }
         await txn.insert(
           'program_exercise_variants',
           Map<String, Object?>.of(v)
@@ -345,32 +354,60 @@ class ProgramDao {
     int dropCount = 0,
   }) async {
     final exercise = await findOrCreateExercise(exerciseName);
-    final count = Sqflite.firstIntValue(await _db.rawQuery(
-          'SELECT COUNT(*) FROM program_exercises WHERE program_day_id = ?',
-          [programDayId],
-        )) ??
-        0;
-    final pe = ProgramExercise(
-      id: _uuid.v4(),
-      programDayId: programDayId,
-      exerciseId: exercise.id,
-      position: count,
-      targetSets: targetSets,
-      targetRepsMin: targetRepsMin,
-      targetRepsMax: targetRepsMax,
-      defaultWeightKg: defaultWeightKg,
-      weightStepKg: weightStepKg,
-      dropCount: dropCount,
-    );
-    await _db.insert('program_exercises', pe.toRow());
-    return pe;
+    return _db.transaction((txn) async {
+      // SOW-14 day rule: an exercise that is already a variant on this day
+      // can't also be a slot's base (two slots sharing a base stay allowed).
+      if (await _isVariantOnDay(txn, programDayId, exercise.id)) {
+        throw VariantConflict(
+            VariantConflictReason.variantOfAnotherSlot, exercise.name);
+      }
+      final count = Sqflite.firstIntValue(await txn.rawQuery(
+            'SELECT COUNT(*) FROM program_exercises WHERE program_day_id = ?',
+            [programDayId],
+          )) ??
+          0;
+      final pe = ProgramExercise(
+        id: _uuid.v4(),
+        programDayId: programDayId,
+        exerciseId: exercise.id,
+        position: count,
+        targetSets: targetSets,
+        targetRepsMin: targetRepsMin,
+        targetRepsMax: targetRepsMax,
+        defaultWeightKg: defaultWeightKg,
+        weightStepKg: weightStepKg,
+        dropCount: dropCount,
+      );
+      await txn.insert('program_exercises', pe.toRow());
+      return pe;
+    });
   }
 
   /// Write a slot. If its (possibly renamed) base exercise is one of the
   /// slot's own variants, that variant is dropped in the same transaction —
-  /// a slot can't be a variant of itself.
+  /// a slot can't be a variant of itself. Renaming the base to a variant of
+  /// ANOTHER slot on the day throws [VariantConflict] and writes nothing
+  /// (SOW-14 day rule); a write that keeps the exercise is never refused.
   Future<void> updateProgramExercise(ProgramExercise pe) async {
     await _db.transaction((txn) async {
+      final current = await txn.query('program_exercises',
+          columns: ['exercise_id'],
+          where: 'id = ?',
+          whereArgs: [pe.id],
+          limit: 1);
+      final renamed =
+          current.isEmpty || current.first['exercise_id'] != pe.exerciseId;
+      if (renamed &&
+          await _isVariantOnDay(txn, pe.programDayId, pe.exerciseId,
+              exceptSlotId: pe.id)) {
+        final e = await txn.query('exercises',
+            columns: ['name'],
+            where: 'id = ?',
+            whereArgs: [pe.exerciseId],
+            limit: 1);
+        throw VariantConflict(VariantConflictReason.variantOfAnotherSlot,
+            e.isEmpty ? '' : e.first['name'] as String);
+      }
       await txn.update(
         'program_exercises',
         pe.toRow(),
@@ -405,26 +442,38 @@ class ProgramDao {
 
   // ---------- Variants (SOW-14) ----------
 
-  /// A slot's variants, in order, with their exercise names.
+  /// A slot's variants, in order, with their exercise names. Same read guard
+  /// as [listVariantsForDay].
   Future<List<ProgramExerciseVariantView>> listVariants(
       String programExerciseId) async {
-    final rows = await _db.rawQuery(
-      '''
-      SELECT v.*, e.name AS exercise_name
-      FROM program_exercise_variants v
-      JOIN exercises e ON e.id = v.exercise_id
-      WHERE v.program_exercise_id = ?
-      ORDER BY v.position ASC
-      ''',
-      [programExerciseId],
-    );
-    return rows.map(_variantView).toList();
+    final slot = await _db.query('program_exercises',
+        columns: ['program_day_id'],
+        where: 'id = ?',
+        whereArgs: [programExerciseId],
+        limit: 1);
+    if (slot.isEmpty) return const [];
+    final day = await listVariantsForDay(slot.first['program_day_id'] as String);
+    return day[programExerciseId] ?? const [];
   }
 
   /// Every slot's variants on a day, keyed by slot id, each list in order.
   /// Slots without variants are absent from the map.
+  ///
+  /// Read guard for the SOW-14 day rule (each exercise once per day): the DAO
+  /// refuses new conflicts, but a day can still hold one written before the
+  /// rule (e.g. 1.4.1 renamed a base to one of its variants, or to another
+  /// slot's variant). Such a variant is hidden — the base wins, else the first
+  /// variant in day order — so the workout picker never shows a dead or
+  /// ambiguous row.
   Future<Map<String, List<ProgramExerciseVariantView>>> listVariantsForDay(
       String programDayId) async {
+    final bases = {
+      for (final r in await _db.query('program_exercises',
+          columns: ['exercise_id'],
+          where: 'program_day_id = ?',
+          whereArgs: [programDayId]))
+        r['exercise_id'] as String,
+    };
     final rows = await _db.rawQuery(
       '''
       SELECT v.*, e.name AS exercise_name
@@ -437,8 +486,11 @@ class ProgramDao {
       [programDayId],
     );
     final out = <String, List<ProgramExerciseVariantView>>{};
+    final seen = <String>{};
     for (final r in rows) {
       final view = _variantView(r);
+      final exerciseId = view.variant.exerciseId;
+      if (bases.contains(exerciseId) || !seen.add(exerciseId)) continue;
       (out[view.variant.programExerciseId] ??= []).add(view);
     }
     return out;
@@ -446,7 +498,7 @@ class ProgramDao {
 
   /// Add a variant to a slot, last in order. Throws [VariantConflict] when the
   /// exercise is the slot's base, already a variant of it, or another slot's
-  /// base on the same day.
+  /// base or variant on the same day (SOW-14 day rule).
   Future<ProgramExerciseVariant> addVariant({
     required String programExerciseId,
     required String exerciseName,
@@ -545,6 +597,32 @@ class ProgramDao {
       throw VariantConflict(
           VariantConflictReason.baseOfAnotherSlot, exerciseName);
     }
+    if (await _isVariantOnDay(
+        txn, slot.first['program_day_id'] as String, exerciseId,
+        exceptSlotId: programExerciseId)) {
+      throw VariantConflict(
+          VariantConflictReason.variantOfAnotherSlot, exerciseName);
+    }
+  }
+
+  /// Whether [exerciseId] is a variant of some slot on [programDayId] (other
+  /// than [exceptSlotId]).
+  Future<bool> _isVariantOnDay(
+    DatabaseExecutor txn,
+    String programDayId,
+    String exerciseId, {
+    String? exceptSlotId,
+  }) async {
+    final rows = await txn.rawQuery(
+      '''
+      SELECT 1 FROM program_exercise_variants v
+      JOIN program_exercises pe ON pe.id = v.program_exercise_id
+      WHERE pe.program_day_id = ? AND v.exercise_id = ? AND pe.id != ?
+      LIMIT 1
+      ''',
+      [programDayId, exerciseId, exceptSlotId ?? ''],
+    );
+    return rows.isNotEmpty;
   }
 
   ProgramExerciseVariantView _variantView(Map<String, Object?> r) =>

@@ -152,6 +152,39 @@ void main() {
     });
   });
 
+  // Review #7: a variant equal to the base (1.4.1 renamed the base to it) or
+  // repeated must not produce a dead duplicate row in the picker.
+  test('members list each exercise once, the base first', () {
+    const dup = SlotVariant(
+      variantId: 'v9',
+      exerciseId: 'bar',
+      name: 'Bar',
+      defaultWeightKg: 10,
+    );
+    const machine = SlotVariant(
+      variantId: 'v1',
+      exerciseId: 'machine',
+      name: 'Machine',
+      defaultWeightKg: 40,
+    );
+    const slot = PlannedExercise(
+      programExerciseId: 'pe',
+      exerciseId: 'bar',
+      exerciseName: 'Bar',
+      targetSets: 3,
+      targetRepsMin: 8,
+      targetRepsMax: 10,
+      defaultWeightKg: 60,
+      baseExerciseId: 'bar',
+      baseExerciseName: 'Bar',
+      baseDefaultWeightKg: 60,
+      variants: [dup, machine, machine],
+    );
+    expect(slot.members.map((m) => m.exerciseId), ['bar', 'machine']);
+    expect(slot.members.first.isBase, isTrue);
+    expect(slot.members.first.defaultWeightKg, 60);
+  });
+
   group('switchVariant', () {
     late Database db;
     late String dayId;

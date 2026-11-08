@@ -11,6 +11,7 @@ import '../../../core/util/weight.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../../onboarding/presentation/onboarding_fx.dart' show reduceMotionOf;
+import '../../programs/domain/program_exercise_variant.dart';
 import '../../share/application/summary_text.dart' show summaryTonnageGrouped;
 import '../../share/domain/workout_summary.dart';
 import '../../share/presentation/share_summary_button.dart';
@@ -974,7 +975,11 @@ class _ProgramUpdateRow extends ConsumerWidget {
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
-    await ctrl.applyOne(update.exerciseId);
+    final conflict = await ctrl.applyOne(update.exerciseId);
+    if (conflict != null) {
+      _showConflict(messenger, conflict);
+      return;
+    }
     final proposed =
         WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
     messenger
@@ -1504,7 +1509,11 @@ class _InlineProgramAction extends ConsumerWidget {
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
-    await ctrl.applyOne(update.exerciseId);
+    final conflict = await ctrl.applyOne(update.exerciseId);
+    if (conflict != null) {
+      _showConflict(messenger, conflict);
+      return;
+    }
     final weight = WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
     messenger
       ..clearSnackBars()
@@ -1700,6 +1709,13 @@ String _formatDuration(Duration d) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  PROGRAM-UPDATE WORDING (shared by the card and the inline action)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// SOW-14 day rule: the program refused the update (it stays pending).
+void _showConflict(ScaffoldMessengerState messenger, VariantConflict e) {
+  messenger
+    ..clearSnackBars()
+    ..showSnackBar(SnackBar(content: Text(e.message)));
+}
 
 String _appliedPhrase(ProgramUpdate u, String weight) => switch (u.kind) {
       ProgramUpdateKind.add => 'added to your program',

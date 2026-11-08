@@ -70,6 +70,8 @@ CREATE TABLE IF NOT EXISTS program_exercise_variants (
   UNIQUE (program_exercise_id, exercise_id));
 CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exercise_id, position);
 ```
+- **Day rule (D-0011, dispatcher default — to confirm with Berke):** within one program day an exercise is used **at most once as a variant, and never as both a variant and a base**. The DAO enforces it in every direction and throws `VariantConflict` (shown inline in the variants sheet, as a snackbar in the day editor and the summary): `addVariant` / `editVariant` (`sameAsBase`, `duplicate`, `baseOfAnotherSlot`, `variantOfAnotherSlot`), `addProgramExercise` and a base rename in `updateProgramExercise` (`variantOfAnotherSlot`; a write that keeps the slot's exercise — a summary raise — is never refused), and the summary's ADD TO DAY / SAVE AS VARIANT for an exercise inserted or swapped into the workout (refused → stays pending). Two slots sharing the same **base** stay allowed, as in 1.4.1 (that pre-existing case still pools sets by exercise, unchanged).
+  - **Read guard:** a day that already breaks the rule (written before it, e.g. a 1.4.1 rename of a base to its own or another slot's variant) is not migrated; `listVariantsForDay` / `listVariants` hide the conflicting variant — the base wins, else the first variant in day order — and `PlannedExercise.members` dedupes by exercise as a last line of defence, so the picker never shows a dead duplicate row. `duplicateProgram` / `duplicateDay` don't copy such a variant, so a copy looks exactly like its source.
 - `IF NOT EXISTS` on both, no `ALTER TABLE`: sqflite rewrites `user_version` on downgrade without calling a hook, so 1.4.1 → 1.5.0 → 1.4.1 → 1.5.0 re-runs the v7 step against an existing table.
 - No mirror column on `session_exercise_overrides` (an override already stores `exercise_id`, `default_weight`, `weight_step`).
 - Watch Pigeon schema stays v3 (the snapshot already sends `exerciseId` + `name` per slot). Export stays JSON `version: 1`; variant sets export under their own exercise.
@@ -87,7 +89,7 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 
 ## 7. Acceptance criteria
 - [ ] Fresh install and v6 → v7 upgrade both create the table; reopening after a forced downgrade to v6 does not fail; all v6 rows survive.
-- [ ] Adding a variant equal to the base, a duplicate, or another slot's base on the same day is rejected with a message.
+- [ ] Adding a variant equal to the base, a duplicate, or another slot's base or variant on the same day is rejected with a message; so is adding (or renaming) a slot's base to an exercise that is a variant on that day.
 - [ ] Renaming a slot's base to one of its variants removes that variant.
 - [ ] Deleting a slot, day or program cascades its variants.
 - [ ] The **Switch variant** menu entry appears only on a non-inserted, non-skipped slot with ≥1 variant; it lists base + variants with the current one marked.
@@ -111,7 +113,7 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 |---|---|---|
 | Downgrade to 1.4.1 then back crashes the v7 step | Med (Berke flips builds) | `IF NOT EXISTS`, no `ALTER`; test reopens a DB forced to `user_version = 6`. |
 | Watch shows a stale exercise right after a switch | Low | A set is attributed by its own `exerciseId` (as with a swap); the snapshot listener pushes the new queue. |
-| Same variant on two slots of one day | Low | Session override decides the slot; else first slot wins. |
+| Same variant on two slots of one day | — | Refused by the DAO (day rule, §5); pre-rule data is hidden on read. |
 | Variant edited mid-workout | Low | Applies from the next start/resume (documented). |
 
 ## 10. Definition of done
@@ -124,4 +126,5 @@ Analyze clean, tests green, simtest VAR-01…VAR-12 + REG-01…REG-07 pass. Mark
 - **Attribution also follows `previous_exercise_id`**, so bar → machine → bar still attributes the machine sets to the slot's variant; inserted override rows never count as swaps.
 - **`summary_apply_state_test` :112-127 is unchanged.** Its "Cable Fly" is logged with no override row, i.e. it is an *added* exercise and correctly stays ADD; the H3 path is covered by a new seed that really swaps via an override.
 - **H4 is summary-only**, as planned: History detail and its share card still read the raw `PrDetector`, so a first exposure can show PR there.
+- **Day rule (fix round D-0011, QA RISK-02 + review #1/#7).** The plan let one variant sit on two slots of a day ("the session override decides"); QA showed set counts, carry-over and the summary are keyed by exercise, so the slots pooled their sets. Rather than re-key everything by slot, an exercise is now used at most once per day as a variant (§5). Pre-rule rows are hidden, not migrated (1.4.1 had no variants).
 - **Commit order:** the v7 migration and variant DAO were committed after SOW-13's commits (see SOW-13 §11).

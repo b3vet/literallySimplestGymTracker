@@ -66,7 +66,9 @@ class ProgramExerciseVariantView {
   final String exerciseName;
 }
 
-/// Why a variant was refused.
+/// Why a variant — or a slot's base exercise — was refused. SOW-14 rule: within
+/// one program day an exercise is used at most once as a variant, and never as
+/// both a variant and a base (two slots may still share a base, as in 1.4.1).
 enum VariantConflictReason {
   /// The variant would be the slot's own base exercise.
   sameAsBase,
@@ -77,6 +79,11 @@ enum VariantConflictReason {
   /// Another slot on the same day already uses it as its base exercise — the
   /// summary could no longer tell which slot a logged set belongs to.
   baseOfAnotherSlot,
+
+  /// Another slot on the same day already has it as a variant — sets logged
+  /// on it would be pooled across both slots. Raised for a new variant AND for
+  /// a slot base added or renamed to it.
+  variantOfAnotherSlot,
 }
 
 class VariantConflict implements Exception {
@@ -94,6 +101,8 @@ class VariantConflict implements Exception {
         return '$n is already a variant here.';
       case VariantConflictReason.baseOfAnotherSlot:
         return '$n is already its own exercise on this day.';
+      case VariantConflictReason.variantOfAnotherSlot:
+        return '$n is already a variant of another exercise on this day.';
     }
   }
 

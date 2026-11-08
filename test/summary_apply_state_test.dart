@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
+import 'package:ls_workout_tracker/features/programs/domain/program_exercise_variant.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart'
     show sessionPrsProvider;
 import 'package:ls_workout_tracker/features/workout/application/pr_detector.dart';
@@ -470,6 +471,25 @@ void main() {
       expect(summary.exercises.single.pr, isNull);
     });
 
+    // SOW-14 day rule (D-0011): persisting an inserted exercise to the plan
+    // is refused when it has become a variant on the day since.
+    test('ADD TO DAY is refused once the exercise is a variant on the day',
+        () async {
+      expect(kindOf(await vUpdates(), 'curl').kind, ProgramUpdateKind.add);
+      final pDao = ProgramDao(db);
+      await pDao.addVariant(
+        programExerciseId: rowSlotId,
+        exerciseName: 'Curl',
+        defaultWeightKg: 10,
+      );
+      final conflict = await vCtrl().applyOne(ex['curl']!);
+      expect(conflict?.reason, VariantConflictReason.variantOfAnotherSlot);
+      expect(kindOf(await vUpdates(), 'curl').applied, isFalse);
+      expect((await pDao.listProgramExercises(vDayId)).length, 2);
+      expect(await vCtrl().applyAll(), 3, reason: 'the refused one is skipped');
+      expect(kindOf(await vUpdates(), 'curl').applied, isFalse);
+    });
+
     test('applyAll / undoAll count the new kinds', () async {
       expect(await vCtrl().applyAll(), 4);
       expect((await vUpdates()).every((u) => u.applied), isTrue);
@@ -504,10 +524,27 @@ void main() {
       final b = await slot('Flat Press');
       final va = await pDao.addVariant(
           programExerciseId: a, exerciseName: 'Machine Press', defaultWeightKg: 30);
-      final vb = await pDao.addVariant(
-          programExerciseId: b, exerciseName: 'Machine Press', defaultWeightKg: 50);
+      // The DAO now refuses a variant shared by two slots of one day (SOW-14
+      // day rule), so the pure function is fed the pre-rule shape directly.
+      await expectLater(
+        pDao.addVariant(
+            programExerciseId: b,
+            exerciseName: 'Machine Press',
+            defaultWeightKg: 50),
+        throwsA(isA<VariantConflict>()),
+      );
+      final vb = ProgramExerciseVariant(
+        id: 'vb',
+        programExerciseId: b,
+        exerciseId: va.exerciseId,
+        position: 0,
+        defaultWeightKg: 50,
+      );
       final slots = await pDao.listProgramExercises(d.id);
-      final variants = await pDao.listVariantsForDay(d.id);
+      final variants = {
+        ...await pDao.listVariantsForDay(d.id),
+        b: [ProgramExerciseVariantView(variant: vb, exerciseName: 'Machine Press')],
+      };
 
       final noOverride = attributeToSlots(
         exerciseIds: [va.exerciseId],

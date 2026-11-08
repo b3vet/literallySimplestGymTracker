@@ -209,6 +209,41 @@ void main() {
       final copy = await dao.duplicateDay(push.id, name: 'Push COPY');
       expect(await variantShape(copy.id), await variantShape(push.id));
     });
+
+    // SOW-14 day rule: a day that already breaks it (written before the rule)
+    // is copied clean — the conflicting variants are not carried over.
+    test('a copy drops variants that break the day rule', () async {
+      final programId = await seedWithVariants();
+      final push = (await dao.listDays(programId)).first;
+      final slots = await dao.listProgramExercises(push.id);
+      final bench = slots.first;
+      final machine = (await dao.listVariants(bench.pe.id)).first;
+      Future<void> raw(String slotId, String exerciseId, int pos) =>
+          db.insert('program_exercise_variants', {
+            'id': 'raw-$pos',
+            'program_exercise_id': slotId,
+            'exercise_id': exerciseId,
+            'position': pos,
+            'default_weight': 10.0,
+            'weight_step': null,
+          });
+      await raw(bench.pe.id, bench.pe.exerciseId, 7); // = its own base
+      await raw(slots[1].pe.id, machine.variant.exerciseId, 0); // shared
+
+      final copy = await dao.duplicateDay(push.id, name: 'Push COPY');
+      final copied = await db.rawQuery(
+        'SELECT v.exercise_id FROM program_exercise_variants v '
+        'JOIN program_exercises pe ON pe.id = v.program_exercise_id '
+        'WHERE pe.program_day_id = ?',
+        [copy.id],
+      );
+      expect(copied, hasLength(2), reason: 'Machine Press + DB Bench only');
+      expect(await variantShape(copy.id), await variantShape(push.id));
+
+      final progCopy = await dao.duplicateProgram(programId, name: 'C');
+      final copyPush = (await dao.listDays(progCopy.id)).first;
+      expect(await variantShape(copyPush.id), await variantShape(push.id));
+    });
   });
 
   group('duplicateDay', () {

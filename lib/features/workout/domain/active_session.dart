@@ -116,18 +116,24 @@ class PlannedExercise {
   bool get hasVariants =>
       variants.isNotEmpty && !isInserted && baseExerciseId != null;
 
-  /// Base first, then the variants. Empty when [hasVariants] is false.
-  List<SlotVariant> get members => hasVariants
-      ? [
-          SlotVariant(
-            exerciseId: baseExerciseId!,
-            name: baseExerciseName ?? exerciseName,
-            defaultWeightKg: baseDefaultWeightKg ?? defaultWeightKg,
-            weightStepKg: baseWeightStepKg,
-          ),
-          ...variants,
-        ]
-      : const [];
+  /// Base first, then the variants. Empty when [hasVariants] is false. Each
+  /// exercise appears once: a variant repeating the base (or an earlier
+  /// variant) is dropped — the base wins — so the picker never shows a dead
+  /// duplicate row (the DAO's read guard already hides these; belt and braces).
+  List<SlotVariant> get members {
+    if (!hasVariants) return const [];
+    final seen = <String>{baseExerciseId!};
+    return [
+      SlotVariant(
+        exerciseId: baseExerciseId!,
+        name: baseExerciseName ?? exerciseName,
+        defaultWeightKg: baseDefaultWeightKg ?? defaultWeightKg,
+        weightStepKg: baseWeightStepKg,
+      ),
+      for (final v in variants)
+        if (seen.add(v.exerciseId)) v,
+    ];
+  }
 
   /// The member currently running, or null (no variants, or swapped to an
   /// exercise outside the slot with "Change exercise").

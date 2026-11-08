@@ -643,13 +643,21 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
   int get pendingCount => _list.where((u) => !u.applied).length;
   int get appliedCount => _list.where((u) => u.applied).length;
 
-  Future<void> applyOne(String exerciseId) async {
+  /// Apply one update. Returns the [VariantConflict] when the program refused
+  /// it (SOW-14 day rule — e.g. the exercise was added to the day by hand
+  /// since); the update then stays pending and nothing is written.
+  Future<VariantConflict?> applyOne(String exerciseId) async {
     final list = [...await _resolved()];
     final i = list.indexWhere((u) => u.exerciseId == exerciseId);
-    if (i < 0 || list[i].applied) return;
-    list[i] = await _apply(list[i]);
+    if (i < 0 || list[i].applied) return null;
+    try {
+      list[i] = await _apply(list[i]);
+    } on VariantConflict catch (e) {
+      return e;
+    }
     state = AsyncData(list);
     _refreshDay();
+    return null;
   }
 
   Future<void> undoOne(String exerciseId) async {
@@ -667,7 +675,11 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
     var n = 0;
     for (var i = 0; i < list.length; i++) {
       if (list[i].applied) continue;
-      list[i] = await _apply(list[i]);
+      try {
+        list[i] = await _apply(list[i]);
+      } on VariantConflict {
+        continue; // refused by the day rule: stays pending
+      }
       if (list[i].applied) n++;
     }
     if (n > 0) {
@@ -702,6 +714,9 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
         );
         return u.copyWith(applied: true);
       case ProgramUpdateKind.add:
+        // An inserted exercise that has become a variant on this day since
+        // (SOW-14 day rule) is refused by the DAO: stays pending, the caller
+        // shows why.
         final created = await dao.addProgramExercise(
           programDayId: u.programDayId,
           exerciseName: u.exerciseName,
@@ -717,17 +732,12 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
         );
         return u.copyWith(applied: true);
       case ProgramUpdateKind.addVariant:
-        try {
-          final created = await dao.addVariant(
-            programExerciseId: u.programExerciseId!,
-            exerciseName: u.exerciseName,
-            defaultWeightKg: u.proposedTargetKg,
-          );
-          return u.copyWith(applied: true, createdVariantId: created.id);
-        } on VariantConflict {
-          // Added by hand since (or the slot changed): nothing to do.
-          return u;
-        }
+        final created = await dao.addVariant(
+          programExerciseId: u.programExerciseId!,
+          exerciseName: u.exerciseName,
+          defaultWeightKg: u.proposedTargetKg,
+        );
+        return u.copyWith(applied: true, createdVariantId: created.id);
     }
   }
 

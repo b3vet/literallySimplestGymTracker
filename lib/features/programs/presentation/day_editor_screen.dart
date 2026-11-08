@@ -12,6 +12,7 @@ import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program_exercise.dart';
+import '../domain/program_exercise_variant.dart';
 import 'exercise_edit_sheet.dart';
 import 'variants_sheet.dart';
 
@@ -184,17 +185,30 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       initialWeightStepKg: null,
     );
     if (result == null) return;
-    await ref.read(programDaoProvider).addProgramExercise(
-          programDayId: widget.dayId,
-          exerciseName: result.name,
-          targetSets: result.sets,
-          targetRepsMin: result.repsMin,
-          targetRepsMax: result.repsMax,
-          defaultWeightKg: result.weightKg,
-          weightStepKg: result.weightStepKg,
-          dropCount: result.dropCount,
-        );
+    try {
+      await ref.read(programDaoProvider).addProgramExercise(
+            programDayId: widget.dayId,
+            exerciseName: result.name,
+            targetSets: result.sets,
+            targetRepsMin: result.repsMin,
+            targetRepsMax: result.repsMax,
+            defaultWeightKg: result.weightKg,
+            weightStepKg: result.weightStepKg,
+            dropCount: result.dropCount,
+          );
+    } on VariantConflict catch (e) {
+      if (context.mounted) _showConflict(context, e);
+      return;
+    }
     ref.invalidate(dayExercisesProvider(widget.dayId));
+  }
+
+  /// SOW-14 day rule: the sheet has closed, so the refusal goes in a snackbar
+  /// on this screen.
+  void _showConflict(BuildContext context, VariantConflict e) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(e.message)));
   }
 
   Future<void> _editExercise(
@@ -226,20 +240,25 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       final ex = await ref
           .read(programDaoProvider)
           .findOrCreateExercise(result.name);
-      await ref.read(programDaoProvider).updateProgramExercise(
-            ProgramExercise(
-              id: v.pe.id,
-              programDayId: v.pe.programDayId,
-              exerciseId: ex.id,
-              position: v.pe.position,
-              targetSets: result.sets,
-              targetRepsMin: result.repsMin,
-              targetRepsMax: result.repsMax,
-              defaultWeightKg: result.weightKg,
-              weightStepKg: result.weightStepKg,
-              dropCount: result.dropCount,
-            ),
-          );
+      try {
+        await ref.read(programDaoProvider).updateProgramExercise(
+              ProgramExercise(
+                id: v.pe.id,
+                programDayId: v.pe.programDayId,
+                exerciseId: ex.id,
+                position: v.pe.position,
+                targetSets: result.sets,
+                targetRepsMin: result.repsMin,
+                targetRepsMax: result.repsMax,
+                defaultWeightKg: result.weightKg,
+                weightStepKg: result.weightStepKg,
+                dropCount: result.dropCount,
+              ),
+            );
+      } on VariantConflict catch (e) {
+        if (context.mounted) _showConflict(context, e);
+        return;
+      }
     }
     ref.invalidate(dayExercisesProvider(widget.dayId));
     ref.invalidate(dayVariantsProvider(widget.dayId));
