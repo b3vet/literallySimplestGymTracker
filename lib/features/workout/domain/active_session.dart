@@ -33,6 +33,15 @@ class SlotVariant {
       );
 }
 
+/// A session-only weight/step a slot member ran with (e.g. a "Change exercise"
+/// weight edit), remembered when the slot switches away from it so switching
+/// back restores it instead of the planned value (SOW-14, review #3).
+class MemberWeight {
+  const MemberWeight({required this.weightKg, this.weightStepKg});
+  final double weightKg;
+  final double? weightStepKg;
+}
+
 class PlannedExercise {
   const PlannedExercise({
     required this.programExerciseId,
@@ -54,6 +63,7 @@ class PlannedExercise {
     this.baseDefaultWeightKg,
     this.baseWeightStepKg,
     this.variants = const [],
+    this.memberWeights = const {},
   });
   final String programExerciseId;
   final String exerciseId;
@@ -108,6 +118,11 @@ class PlannedExercise {
   /// The slot's variants in program order (empty for most slots). Loaded at
   /// start/resume; edits made mid-workout apply from the next start/resume.
   final List<SlotVariant> variants;
+
+  /// Session weights of members this slot switched away from, by exerciseId
+  /// (in memory; the override row only holds the current member's, so a
+  /// resume keeps just that one — SOW-14 §11).
+  final Map<String, MemberWeight> memberWeights;
 
   /// Whether this slot is a drop-set exercise.
   bool get isDropSet => dropCount > 0;
@@ -186,6 +201,7 @@ class PlannedExercise {
     double? position,
     bool? isInserted,
     int? dropCount,
+    Map<String, MemberWeight>? memberWeights,
   }) =>
       PlannedExercise(
         programExerciseId: programExerciseId,
@@ -211,6 +227,7 @@ class PlannedExercise {
         baseDefaultWeightKg: baseDefaultWeightKg,
         baseWeightStepKg: baseWeightStepKg,
         variants: variants,
+        memberWeights: memberWeights ?? this.memberWeights,
       );
 }
 

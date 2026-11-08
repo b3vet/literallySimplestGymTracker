@@ -53,7 +53,7 @@ Hevy and Strong offer "replace exercise" per workout but forget it next time; Fi
                                  SHOULDER PRESS (DB)    22.5 KG
 ```
 - Selecting a row switches at once (no confirm); selecting the current row just closes the sheet.
-- Switching back to the base with nothing logged on the variant (and the plan's set count restored) drops the override, so the tune button goes back to neutral.
+- Switching back to the base drops the override (tune button back to neutral) only when the round trip left no trace: nothing logged on any variant, and sets, reps, drops, weight and step all as planned. A member's session weight (e.g. a "Change exercise" weight edit) is remembered when the slot switches away from it and restored when it switches back — in memory only: after a resume just the current member's weight is known (one override row per slot).
 - `PREVIOUSLY N SETS ON X` banner stays. The repeat-last-set chip follows the active exercise automatically (it is keyed by `exerciseId`).
 - Skipped and inserted slots never show the entry. Variant edits made during a workout apply from the next start/resume (the queue is fixed at start).
 

@@ -402,6 +402,67 @@ void main() {
       },
     );
 
+    // Review #3: the numbers alone used to decide. Plan 3 → machine 3, + add
+    // set → 4, log 1 on the machine → back to the bar: target 3 again, yet a
+    // machine set exists — the override (and its lineage) must stay.
+    test('back to the base keeps the override when a variant has a set, even '
+        'if the numbers match the plan', () async {
+      final c = await started();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.switchVariant(0, machineId);
+      await ctrl.addSetToCurrent();
+      await log(c, 40);
+      await ctrl.switchVariant(0, barId);
+      final slot = session(c).queue.first;
+      expect(slot.targetSets, 3);
+      expect(slot.isOverridden, isTrue);
+      expect(slot.previousExerciseId, machineId);
+      final o = (await WorkoutDao(db).overridesForSession(session(c).sessionId))
+          .single;
+      expect(o.exerciseId, barId);
+      expect(o.previousExerciseId, machineId);
+    });
+
+    test('a Change-exercise weight edit on the base survives a round trip',
+        () async {
+      final c = await started();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.substituteExercise(
+        queueIdx: 0,
+        exerciseName: 'Shoulder Press',
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 65,
+        weightStepKg: 2.5,
+      );
+      await ctrl.switchVariant(0, machineId);
+      expect(session(c).queue.first.defaultWeightKg, 40);
+      await ctrl.switchVariant(0, barId);
+      final slot = session(c).queue.first;
+      expect(slot.exerciseId, barId);
+      expect(slot.defaultWeightKg, 65, reason: 'the edit, not the plan\'s 60');
+      expect(slot.isOverridden, isTrue, reason: 'still differs from the plan');
+      final o = (await WorkoutDao(db).overridesForSession(session(c).sessionId))
+          .single;
+      expect(o.defaultWeightKg, 65);
+
+      // …and a variant's own edit comes back too.
+      await ctrl.switchVariant(0, machineId);
+      await ctrl.substituteExercise(
+        queueIdx: 0,
+        exerciseName: 'Shoulder Press (Machine)',
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 45,
+        weightStepKg: 5,
+      );
+      await ctrl.switchVariant(0, barId);
+      await ctrl.switchVariant(0, machineId);
+      expect(session(c).queue.first.defaultWeightKg, 45);
+    });
+
     test('a complete slot ignores the switch: plan 3, all done, round trip',
         () async {
       final c = await started();

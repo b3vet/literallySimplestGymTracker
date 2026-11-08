@@ -880,9 +880,32 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     if (member == null) return;
 
     final target = carryOverTargetSets(slot, exerciseId, current.loggedSets);
-    final step = member.weightStepKg ?? slot.baseWeightStepKg;
+    // Remember what the member we leave ran with (a "Change exercise" weight
+    // edit included), and come back to it rather than to the plan (review #3).
+    final weights = {
+      ...slot.memberWeights,
+      slot.exerciseId: MemberWeight(
+        weightKg: slot.defaultWeightKg,
+        weightStepKg: slot.weightStepKg,
+      ),
+    };
+    final remembered = weights[member.exerciseId];
+    final weight = remembered?.weightKg ?? member.defaultWeightKg;
+    final step = remembered != null
+        ? remembered.weightStepKg
+        : (member.weightStepKg ?? slot.baseWeightStepKg);
 
     if (member.isBase) {
+      // Drop the override only when the round trip left no trace: nothing
+      // logged on any non-base member (or on a swapped-in exercise), and every
+      // plan value — sets, reps, drops, weight, step — as planned. Otherwise
+      // the override stays, so the PREVIOUSLY banner and summary attribution
+      // keep the variant's sets and a weight edit survives.
+      final loggedOffBase = {
+        for (final m in slot.members)
+          if (!m.isBase) m.exerciseId,
+        slot.exerciseId,
+      }.any((id) => completedSetsFor(current.loggedSets, id) > 0);
       final planned =
           await _programDao.listProgramExercises(current.programDayId);
       ProgramExerciseView? plan;
@@ -890,10 +913,13 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         if (v.pe.id == slot.programExerciseId) plan = v;
       }
       if (plan != null &&
+          !loggedOffBase &&
           target == plan.pe.targetSets &&
           slot.targetRepsMin == plan.pe.targetRepsMin &&
           slot.targetRepsMax == plan.pe.targetRepsMax &&
-          slot.dropCount == plan.pe.dropCount) {
+          slot.dropCount == plan.pe.dropCount &&
+          weight == plan.pe.defaultWeightKg &&
+          step == plan.pe.weightStepKg) {
         await _workoutDao.deleteOverride(
           sessionId: current.sessionId,
           programExerciseId: slot.programExerciseId,
@@ -906,6 +932,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
           weightStepKg: plan.pe.weightStepKg,
           isOverridden: false,
           previousExerciseId: null,
+          memberWeights: weights,
         );
         _replaceSlot(current, queueIdx, restored);
         return;
@@ -920,7 +947,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       targetSets: target,
       targetRepsMin: slot.targetRepsMin,
       targetRepsMax: slot.targetRepsMax,
-      defaultWeightKg: member.defaultWeightKg,
+      defaultWeightKg: weight,
       weightStepKg: step,
       skipped: false,
       dropCount: slot.dropCount,
@@ -932,10 +959,11 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         exerciseId: member.exerciseId,
         exerciseName: member.name,
         targetSets: target,
-        defaultWeightKg: member.defaultWeightKg,
+        defaultWeightKg: weight,
         weightStepKg: step,
         isOverridden: true,
         previousExerciseId: slot.exerciseId,
+        memberWeights: weights,
       ),
     );
   }
