@@ -838,51 +838,53 @@ class _ProgramUpdateRow extends ConsumerWidget {
     final isAdd = u.isAddKind;
     final slot = (u.slotName ?? '').toUpperCase();
     final targetWord =
-        u.kind == ProgramUpdateKind.raiseVariant ? 'VARIANT TARGET  ' : 'TARGET  ';
-    final proposed =
-        WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
+        u.kind == ProgramUpdateKind.raiseVariant ? 'VARIANT TARGET' : 'TARGET';
+    // Non-breaking spaces: a weight never splits between number and unit.
+    final spoken = WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
+    final proposed = _nb(spoken);
+    final dataStyle = LsType.monoData.copyWith(fontSize: 20);
 
+    // QA VAR-08: these lines WRAP rather than ellipsize — the old Row gave the
+    // new weight whatever width was left after the label and the old weight,
+    // which on a variant card was nothing ("40 → 42…", or "42.5 →" with the
+    // value gone). In a Wrap the "old → new" group drops below the label when
+    // it doesn't fit beside it, and itself wraps at the arrow if it must.
     final valueLine = isAdd
         ? Text(
             u.kind == ProgramUpdateKind.addVariant
                 ? 'VARIANT OF $slot @ $proposed'
                 : '${u.targetSets} × ${u.targetRepsMax} @ $proposed',
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: LsType.monoData
-                .copyWith(color: t.surface.text, fontSize: 20),
+            style: dataStyle.copyWith(color: t.surface.text),
           )
-        : u.applied
-            ? Row(children: [
-                Text(targetWord,
-                    style:
-                        LsType.monoMeta.copyWith(color: t.surface.text2)),
-                Text(proposed,
-                    style: LsType.monoData
-                        .copyWith(color: t.surface.text, fontSize: 20)),
-              ])
-            : Row(children: [
-                Text(targetWord,
-                    style:
-                        LsType.monoMeta.copyWith(color: t.surface.text2)),
-                Text(
-                  WeightConv.format(u.currentTargetKg ?? 0, unit)
-                      .toUpperCase()
-                      .replaceAll(' ${unit.short.toUpperCase()}', ''),
-                  style: LsType.monoData
-                      .copyWith(color: t.surface.text3, fontSize: 20),
-                ),
-                Text(' → ',
-                    style: LsType.monoData
-                        .copyWith(color: t.surface.text3, fontSize: 20)),
-                Flexible(
-                  child: Text(proposed,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: LsType.monoData
-                          .copyWith(color: t.surface.text, fontSize: 20)),
-                ),
-              ]);
+        : Wrap(
+            spacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(targetWord,
+                  style: LsType.monoMeta.copyWith(color: t.surface.text2)),
+              u.applied
+                  ? Text(proposed,
+                      style: dataStyle.copyWith(color: t.surface.text))
+                  : Text.rich(
+                      TextSpan(children: [
+                        TextSpan(
+                          text: _nb(WeightConv.format(u.currentTargetKg ?? 0, unit)
+                              .toUpperCase()
+                              .replaceAll(' ${unit.short.toUpperCase()}', '')),
+                          style: dataStyle.copyWith(color: t.surface.text3),
+                        ),
+                        TextSpan(
+                          text: ' → ',
+                          style: dataStyle.copyWith(color: t.surface.text3),
+                        ),
+                        TextSpan(
+                          text: proposed,
+                          style: dataStyle.copyWith(color: t.surface.text),
+                        ),
+                      ]),
+                    ),
+            ],
+          );
 
     final statusWord = u.applied
         ? (u.kind == ProgramUpdateKind.addVariant
@@ -893,7 +895,9 @@ class _ProgramUpdateRow extends ConsumerWidget {
         switch (u.kind) {
           ProgramUpdateKind.add => 'NOT IN PLAN',
           ProgramUpdateKind.addVariant => 'SWAPPED IN',
-          ProgramUpdateKind.raiseVariant => 'VARIANT',
+          // The value line already reads VARIANT TARGET (QA VAR-08: the
+          // extra tag only took width from the name).
+          ProgramUpdateKind.raiseVariant => null,
           ProgramUpdateKind.raise => null,
         };
 
@@ -901,8 +905,8 @@ class _ProgramUpdateRow extends ConsumerWidget {
       container: true,
       button: !u.applied,
       label: u.applied
-          ? '${u.exerciseName} ${_appliedPhrase(u, proposed)}.'
-          : '${u.exerciseName}. ${_pendingPhrase(u, proposed)}.',
+          ? '${u.exerciseName} ${_appliedPhrase(u, spoken)}.'
+          : '${u.exerciseName}. ${_pendingPhrase(u, spoken)}.',
       child: ExcludeSemantics(
         child: Material(
           color: Colors.transparent,
@@ -926,21 +930,28 @@ class _ProgramUpdateRow extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Row(
+                        // A Wrap, not a Row (QA VAR-08): the name gets the
+                        // full width and wraps; the tag sits
+                        // beside it when there's room and drops below when
+                        // there isn't, instead of squeezing the name to
+                        // "SHOULDER PRESS (…".
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 2,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Flexible(
-                              child: Text(
-                                u.exerciseName.toUpperCase(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: LsType.displayS.copyWith(
-                                    color: t.surface.text, fontSize: 23),
-                              ),
+                            Text(
+                              u.exerciseName.toUpperCase(),
+                              // Wraps (2 lines for "SHOULDER PRESS (MACHINE)",
+                              // 3 for a long name) before any ellipsis.
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: LsType.displayS.copyWith(
+                                  color: t.surface.text, fontSize: 23),
                             ),
-                            if (tag != null) ...[
-                              const SizedBox(width: 8),
-                              // Signal 3 of 3: a word, so the state survives
-                              // greyscale and colour-blindness.
+                            // Signal 3 of 3: a word, so the state survives
+                            // greyscale and colour-blindness.
+                            if (tag != null)
                               Text(
                                 tag,
                                 style: LsType.monoMeta.copyWith(
@@ -949,7 +960,6 @@ class _ProgramUpdateRow extends ConsumerWidget {
                                       : t.surface.text3,
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         const SizedBox(height: LsGap.tight),
@@ -1174,7 +1184,10 @@ class _LiftCard extends ConsumerWidget {
                             Expanded(
                               child: Text(
                                 e.name.toUpperCase(),
-                                maxLines: 2,
+                                // Three lines: a long variant name next to its
+                                // PR chip ("SINGLE-ARM LANDMINE / SHOULDER
+                                // PRESS / (MACHINE)") stays whole (QA VAR-08).
+                                maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                                 style: LsType.displayM.copyWith(
                                     color: t.surface.text, fontSize: 26),
@@ -1201,7 +1214,7 @@ class _LiftCard extends ConsumerWidget {
                           Text(
                             'VARIANT OF '
                             '${(e.variantOfName ?? '').toUpperCase()}',
-                            maxLines: 1,
+                            maxLines: 2,
                             overflow: TextOverflow.ellipsis,
                             style: LsType.monoMeta
                                 .copyWith(color: t.surface.text3),
@@ -1440,7 +1453,8 @@ class _InlineProgramAction extends ConsumerWidget {
     final t = LsTheme.of(context);
     final u = update;
     final isAdd = u.isAddKind;
-    final weight = WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
+    final weight =
+        _nb(WeightConv.format(u.proposedTargetKg, unit).toUpperCase());
     final raiseLabel = u.kind == ProgramUpdateKind.raiseVariant
         ? 'VARIANT TARGET → $weight'
         : (u.currentTargetKg ?? 0) < u.proposedTargetKg - 1e-6
@@ -1465,7 +1479,8 @@ class _InlineProgramAction extends ConsumerWidget {
       button: !u.applied,
       label: u.applied
           ? '${u.exerciseName} ${_appliedPhrase(u, weight)}.'
-          : label,
+              .replaceAll('\u00A0', ' ')
+          : label.replaceAll('\u00A0', ' '),
       child: ExcludeSemantics(
         child: Material(
           color: Colors.transparent,
@@ -1492,8 +1507,10 @@ class _InlineProgramAction extends ConsumerWidget {
                   ),
                   const SizedBox(width: 8),
                   Flexible(
+                    // Two lines before an ellipsis: "VARIANT TARGET → 42.5 KG"
+                    // must keep its number (QA VAR-08).
                     child: Text(label,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: LsType.monoMeta.copyWith(color: fg)),
                   ),
@@ -1709,6 +1726,10 @@ String _formatDuration(Duration d) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  PROGRAM-UPDATE WORDING (shared by the card and the inline action)
 // ─────────────────────────────────────────────────────────────────────────────
+
+/// [s] with its spaces made non-breaking, so a weight like "42.5 KG" never
+/// wraps between the number and the unit.
+String _nb(String s) => s.replaceAll(' ', '\u00A0');
 
 /// SOW-14 day rule: the program refused the update (it stays pending).
 void _showConflict(ScaffoldMessengerState messenger, VariantConflict e) {
