@@ -213,6 +213,282 @@ void main() {
     expect(s.prCount, 0);
   });
 
+  group('variants (SOW-14)', () {
+    late String vSessionId;
+    late String vDayId;
+    late String pressSlotId;
+    late String rowSlotId;
+    late String machineVariantId;
+    late String dbVariantId;
+    late Map<String, String> ex; // name → exercise id
+
+    Future<void> logSets(
+      WorkoutDao w,
+      String sessionId,
+      String exerciseId,
+      double kg, {
+      int n = 2,
+    }) async {
+      for (var i = 0; i < n; i++) {
+        await w.insertSet(
+          sessionId: sessionId,
+          exerciseId: exerciseId,
+          setIndex: i,
+          reps: 8,
+          weightKg: kg,
+          rir: 1,
+        );
+      }
+    }
+
+    /// Upper day: Shoulder Press (60) with variants Machine (40) and DB
+    /// (22.5); Row (60). An earlier session gives Machine/DB/Cable Row a
+    /// history. Today: press beats target; machine beats ITS target; DB stays
+    /// under its target; Row was swapped for Cable Row with "Change exercise";
+    /// Curl was inserted.
+    setUp(() async {
+      final pDao = ProgramDao(db);
+      final wDao = WorkoutDao(db);
+      final p = await pDao.createProgram('Upper/Lower');
+      vDayId = (await pDao.createDay(p.id, 'Upper')).id;
+      final press = await pDao.addProgramExercise(
+        programDayId: vDayId,
+        exerciseName: 'Shoulder Press',
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 60,
+      );
+      final row = await pDao.addProgramExercise(
+        programDayId: vDayId,
+        exerciseName: 'Row',
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 60,
+      );
+      pressSlotId = press.id;
+      rowSlotId = row.id;
+      final machine = await pDao.addVariant(
+        programExerciseId: press.id,
+        exerciseName: 'Shoulder Press (Machine)',
+        defaultWeightKg: 40,
+      );
+      final dbv = await pDao.addVariant(
+        programExerciseId: press.id,
+        exerciseName: 'Shoulder Press (DB)',
+        defaultWeightKg: 22.5,
+      );
+      machineVariantId = machine.id;
+      dbVariantId = dbv.id;
+      final cable = await pDao.findOrCreateExercise('Cable Row');
+      final curl = await pDao.findOrCreateExercise('Curl');
+      ex = {
+        'press': press.exerciseId,
+        'row': row.exerciseId,
+        'machine': machine.exerciseId,
+        'db': dbv.exerciseId,
+        'cable': cable.id,
+        'curl': curl.id,
+      };
+
+      final earlier = await wDao.startSession(vDayId);
+      await logSets(wDao, earlier.id, ex['machine']!, 40);
+      await logSets(wDao, earlier.id, ex['db']!, 25);
+      await logSets(wDao, earlier.id, ex['cable']!, 50);
+      await wDao.completeSession(earlier.id);
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+
+      final today = await wDao.startSession(vDayId);
+      vSessionId = today.id;
+      await logSets(wDao, today.id, ex['press']!, 62.5);
+      await logSets(wDao, today.id, ex['machine']!, 45);
+      await logSets(wDao, today.id, ex['db']!, 20);
+      await wDao.upsertOverride(
+        sessionId: today.id,
+        programExerciseId: row.id,
+        exerciseId: cable.id,
+        previousExerciseId: row.exerciseId,
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 50,
+      );
+      await logSets(wDao, today.id, cable.id, 55);
+      await wDao.insertSessionExercise(
+        sessionId: today.id,
+        exerciseId: curl.id,
+        targetSets: 2,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
+        defaultWeightKg: 12,
+        orderPos: 5,
+      );
+      await logSets(wDao, today.id, curl.id, 12);
+      await wDao.completeSession(today.id);
+    });
+
+    Future<List<ProgramUpdate>> vUpdates() =>
+        container.read(programUpdatesProvider(vSessionId).future);
+    ProgramUpdatesController vCtrl() =>
+        container.read(programUpdatesProvider(vSessionId).notifier);
+    ProgramUpdate kindOf(List<ProgramUpdate> l, String key) =>
+        l.singleWhere((u) => u.exerciseId == ex[key]);
+
+    test('each exercise gets the right kind', () async {
+      final list = await vUpdates();
+      expect(kindOf(list, 'press').kind, ProgramUpdateKind.raise);
+      final m = kindOf(list, 'machine');
+      expect(m.kind, ProgramUpdateKind.raiseVariant,
+          reason: 'a variant is never offered ADD TO DAY');
+      expect(m.currentTargetKg, 40);
+      expect(m.proposedTargetKg, 45);
+      expect(m.slotName, 'Shoulder Press');
+      final c = kindOf(list, 'cable');
+      expect(c.kind, ProgramUpdateKind.addVariant,
+          reason: 'H3: a Change-exercise swap is saved as a variant');
+      expect(c.programExerciseId, rowSlotId);
+      expect(c.slotName, 'Row');
+      expect(kindOf(list, 'curl').kind, ProgramUpdateKind.add,
+          reason: 'an inserted exercise is still ADD TO DAY');
+      expect(list.where((u) => u.exerciseId == ex['db']), isEmpty,
+          reason: 'under its own target, no PR: nothing to offer');
+    });
+
+    test('the summary marks variants and keeps them in plan', () async {
+      final s = await container.read(sessionSummaryProvider(vSessionId).future);
+      final m = s!.exercises.singleWhere((e) => e.exerciseId == ex['machine']);
+      expect(m.isVariant, isTrue);
+      expect(m.inPlan, isTrue);
+      expect(m.variantOfName, 'Shoulder Press');
+      expect(m.planVariant!.defaultWeightKg, 40);
+      expect(m.variantSlotPe!.id, pressSlotId);
+      final c = s.exercises.singleWhere((e) => e.exerciseId == ex['cable']);
+      expect(c.isVariant, isFalse);
+      expect(c.inPlan, isFalse);
+      expect(c.substituteSlotPe!.id, rowSlotId);
+    });
+
+    test('raiseVariant changes the variant row only; undo restores it',
+        () async {
+      final pDao = ProgramDao(db);
+      await vCtrl().applyOne(ex['machine']!);
+      var variants = await pDao.listVariants(pressSlotId);
+      expect(
+        variants.singleWhere((v) => v.variant.id == machineVariantId)
+            .variant.defaultWeightKg,
+        45,
+      );
+      expect(
+        variants.singleWhere((v) => v.variant.id == dbVariantId)
+            .variant.defaultWeightKg,
+        22.5,
+      );
+      final base = (await pDao.listProgramExercises(vDayId))
+          .singleWhere((v) => v.pe.id == pressSlotId);
+      expect(base.pe.defaultWeightKg, 60, reason: 'the base never moves');
+
+      await vCtrl().undoOne(ex['machine']!);
+      variants = await pDao.listVariants(pressSlotId);
+      expect(
+        variants.singleWhere((v) => v.variant.id == machineVariantId)
+            .variant.defaultWeightKg,
+        40,
+      );
+      expect(kindOf(await vUpdates(), 'machine').applied, isFalse);
+    });
+
+    test('addVariant creates the variant; undo deletes exactly that row',
+        () async {
+      final pDao = ProgramDao(db);
+      await vCtrl().applyOne(ex['cable']!);
+      var rowVariants = await pDao.listVariants(rowSlotId);
+      expect(rowVariants.single.exerciseName, 'Cable Row');
+      expect(rowVariants.single.variant.defaultWeightKg, 55);
+      final applied = kindOf(await vUpdates(), 'cable');
+      expect(applied.applied, isTrue);
+      expect(applied.createdVariantId, rowVariants.single.variant.id);
+      expect((await pDao.listProgramExercises(vDayId)).length, 2,
+          reason: 'no slot was added');
+
+      await vCtrl().undoOne(ex['cable']!);
+      rowVariants = await pDao.listVariants(rowSlotId);
+      expect(rowVariants, isEmpty);
+      expect((await pDao.listVariants(pressSlotId)).length, 2,
+          reason: 'other variants untouched');
+      expect(kindOf(await vUpdates(), 'cable').createdVariantId, isNull);
+    });
+
+    test('applyAll / undoAll count the new kinds', () async {
+      expect(await vCtrl().applyAll(), 4);
+      expect((await vUpdates()).every((u) => u.applied), isTrue);
+      expect(await vCtrl().applyAll(), 0);
+      expect(await vCtrl().undoAll(), 4);
+      final pDao = ProgramDao(db);
+      expect(await pDao.listVariants(rowSlotId), isEmpty);
+      expect(
+        (await pDao.listVariants(pressSlotId))
+            .map((v) => v.variant.defaultWeightKg),
+        [40, 22.5],
+      );
+      expect((await pDao.listProgramExercises(vDayId)).length, 2);
+    });
+  });
+
+  group('attributeToSlots', () {
+    test('this session\'s override decides between two slots', () async {
+      final pDao = ProgramDao(db);
+      final p = await pDao.createProgram('X');
+      final d = await pDao.createDay(p.id, 'D');
+      Future<String> slot(String n) async => (await pDao.addProgramExercise(
+            programDayId: d.id,
+            exerciseName: n,
+            targetSets: 3,
+            targetRepsMin: 8,
+            targetRepsMax: 10,
+            defaultWeightKg: 50,
+          ))
+              .id;
+      final a = await slot('Incline Press');
+      final b = await slot('Flat Press');
+      final va = await pDao.addVariant(
+          programExerciseId: a, exerciseName: 'Machine Press', defaultWeightKg: 30);
+      final vb = await pDao.addVariant(
+          programExerciseId: b, exerciseName: 'Machine Press', defaultWeightKg: 50);
+      final slots = await pDao.listProgramExercises(d.id);
+      final variants = await pDao.listVariantsForDay(d.id);
+
+      final noOverride = attributeToSlots(
+        exerciseIds: [va.exerciseId],
+        slots: slots,
+        variantsBySlot: variants,
+        overrides: const [],
+      );
+      expect(noOverride[va.exerciseId]!.variant!.id, va.id,
+          reason: 'first slot in day order');
+
+      final w = WorkoutDao(db);
+      final s = await w.startSession(d.id);
+      await w.upsertOverride(
+        sessionId: s.id,
+        programExerciseId: b,
+        exerciseId: vb.exerciseId,
+        targetSets: 3,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 50,
+      );
+      final withOverride = attributeToSlots(
+        exerciseIds: [va.exerciseId],
+        slots: slots,
+        variantsBySlot: variants,
+        overrides: await w.overridesForSession(s.id),
+      );
+      expect(withOverride[va.exerciseId]!.variant!.id, vb.id);
+      expect(withOverride[va.exerciseId]!.slot.pe.id, b);
+    });
+  });
+
   group('classifyProgress', () {
     test('heavier wins', () {
       expect(

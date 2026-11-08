@@ -834,19 +834,26 @@ class _ProgramUpdateRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final u = update;
-    final isAdd = u.kind == ProgramUpdateKind.add;
+    final isAdd = u.isAddKind;
+    final slot = (u.slotName ?? '').toUpperCase();
+    final targetWord =
+        u.kind == ProgramUpdateKind.raiseVariant ? 'VARIANT TARGET  ' : 'TARGET  ';
     final proposed =
         WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
 
     final valueLine = isAdd
         ? Text(
-            '${u.targetSets} × ${u.targetRepsMax} @ $proposed',
+            u.kind == ProgramUpdateKind.addVariant
+                ? 'VARIANT OF $slot @ $proposed'
+                : '${u.targetSets} × ${u.targetRepsMax} @ $proposed',
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
             style: LsType.monoData
                 .copyWith(color: t.surface.text, fontSize: 20),
           )
         : u.applied
             ? Row(children: [
-                Text('TARGET  ',
+                Text(targetWord,
                     style:
                         LsType.monoMeta.copyWith(color: t.surface.text2)),
                 Text(proposed,
@@ -854,7 +861,7 @@ class _ProgramUpdateRow extends ConsumerWidget {
                         .copyWith(color: t.surface.text, fontSize: 20)),
               ])
             : Row(children: [
-                Text('TARGET  ',
+                Text(targetWord,
                     style:
                         LsType.monoMeta.copyWith(color: t.surface.text2)),
                 Text(
@@ -876,15 +883,25 @@ class _ProgramUpdateRow extends ConsumerWidget {
                 ),
               ]);
 
-    final statusWord = u.applied ? (isAdd ? 'ADDED' : 'UPDATED') : null;
-    final tag = statusWord ?? (isAdd ? 'NOT IN PLAN' : null);
+    final statusWord = u.applied
+        ? (u.kind == ProgramUpdateKind.addVariant
+            ? 'SAVED'
+            : (isAdd ? 'ADDED' : 'UPDATED'))
+        : null;
+    final tag = statusWord ??
+        switch (u.kind) {
+          ProgramUpdateKind.add => 'NOT IN PLAN',
+          ProgramUpdateKind.addVariant => 'SWAPPED IN',
+          ProgramUpdateKind.raiseVariant => 'VARIANT',
+          ProgramUpdateKind.raise => null,
+        };
 
     return Semantics(
       container: true,
       button: !u.applied,
       label: u.applied
-          ? '${u.exerciseName} ${isAdd ? 'added to your program' : 'target updated to $proposed'}.'
-          : '${u.exerciseName}. ${isAdd ? 'Add to your program' : 'Raise target to $proposed'}.',
+          ? '${u.exerciseName} ${_appliedPhrase(u, proposed)}.'
+          : '${u.exerciseName}. ${_pendingPhrase(u, proposed)}.',
       child: ExcludeSemantics(
         child: Material(
           color: Colors.transparent,
@@ -963,9 +980,7 @@ class _ProgramUpdateRow extends ConsumerWidget {
     messenger
       ..clearSnackBars()
       ..showSnackBar(SnackBar(
-        content: Text(update.kind == ProgramUpdateKind.add
-            ? '${update.exerciseName.toUpperCase()} added to your program'
-            : '${update.exerciseName.toUpperCase()} target → $proposed'),
+        content: Text(_snackText(update, proposed, null)),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'UNDO',
@@ -1111,7 +1126,8 @@ class _LiftCard extends ConsumerWidget {
     return Semantics(
       container: true,
       button: true,
-      label: '${e.name}.${e.isPr ? ' Personal record.' : ''} '
+      label: '${e.name}.${e.isPr ? ' Personal record.' : ''}'
+          '${e.isVariant ? ' Variant of ${e.variantOfName}.' : ''} '
           '$top, ${e.setCount} sets. ${delta.semantics}',
       hint: expanded ? 'Double tap to hide sets.' : 'Double tap to show sets.',
       child: ExcludeSemantics(
@@ -1169,6 +1185,17 @@ class _LiftCard extends ConsumerWidget {
                             ],
                           ],
                         ),
+                        if (e.isVariant) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'VARIANT OF '
+                            '${(e.variantOfName ?? '').toUpperCase()}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: LsType.monoMeta
+                                .copyWith(color: t.surface.text3),
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         // Wrap, not Row: at the widest combination (a 3-digit
                         // weight plus a long delta word) the three parts are
@@ -1213,7 +1240,12 @@ class _LiftCard extends ConsumerWidget {
 
   Widget _expandedBody(BuildContext context, WidgetRef ref, LsTheme t) {
     final e = exercise;
-    final pe = e.planPe;
+    // A variant's TARGET line: the slot's sets/reps at the variant's weight.
+    final pe = e.planPe ??
+        (e.planVariant == null
+            ? null
+            : e.variantSlotPe
+                ?.copyWith(defaultWeightKg: e.planVariant!.defaultWeightKg));
     final update = ref
         .watch(programUpdatesProvider(sessionId))
         .value
@@ -1396,22 +1428,32 @@ class _InlineProgramAction extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final u = update;
-    final isAdd = u.kind == ProgramUpdateKind.add;
+    final isAdd = u.isAddKind;
     final weight = WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
-    final raiseLabel = (u.currentTargetKg ?? 0) < u.proposedTargetKg - 1e-6
-        ? 'RAISE TARGET → $weight'
-        : 'SET TARGET → $weight';
+    final raiseLabel = u.kind == ProgramUpdateKind.raiseVariant
+        ? 'VARIANT TARGET → $weight'
+        : (u.currentTargetKg ?? 0) < u.proposedTargetKg - 1e-6
+            ? 'RAISE TARGET → $weight'
+            : 'SET TARGET → $weight';
     final label = u.applied
-        ? (isAdd ? 'ADDED' : 'TARGET SET')
-        : (isAdd
-            ? 'ADD TO ${(dayName ?? 'DAY').toUpperCase()}'
-            : raiseLabel);
+        ? switch (u.kind) {
+            ProgramUpdateKind.add => 'ADDED',
+            ProgramUpdateKind.addVariant => 'SAVED AS VARIANT',
+            _ => 'TARGET SET',
+          }
+        : switch (u.kind) {
+            ProgramUpdateKind.add =>
+              'ADD TO ${(dayName ?? 'DAY').toUpperCase()}',
+            ProgramUpdateKind.addVariant =>
+              'SAVE AS VARIANT OF ${(u.slotName ?? '').toUpperCase()}',
+            _ => raiseLabel,
+          };
     final fg = u.applied ? t.accent.accentInk : t.accent.accent;
 
     return Semantics(
       button: !u.applied,
       label: u.applied
-          ? '${u.exerciseName} ${isAdd ? 'added to your program' : 'target set to $weight'}.'
+          ? '${u.exerciseName} ${_appliedPhrase(u, weight)}.'
           : label,
       child: ExcludeSemantics(
         child: Material(
@@ -1461,10 +1503,7 @@ class _InlineProgramAction extends ConsumerWidget {
     messenger
       ..clearSnackBars()
       ..showSnackBar(SnackBar(
-        content: Text(update.kind == ProgramUpdateKind.add
-            ? '${update.exerciseName.toUpperCase()} added to '
-                '${(dayName ?? 'day').toUpperCase()}'
-            : '${update.exerciseName.toUpperCase()} target → $weight'),
+        content: Text(_snackText(update, weight, dayName)),
         duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'UNDO',
@@ -1650,4 +1689,37 @@ String _formatDuration(Duration d) {
   final m = d.inMinutes.remainder(60);
   if (h > 0) return '${h}H ${m}M';
   return '${m}M';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROGRAM-UPDATE WORDING (shared by the card and the inline action)
+// ─────────────────────────────────────────────────────────────────────────────
+
+String _appliedPhrase(ProgramUpdate u, String weight) => switch (u.kind) {
+      ProgramUpdateKind.add => 'added to your program',
+      ProgramUpdateKind.addVariant =>
+        'saved as a variant of ${u.slotName ?? 'its slot'}',
+      ProgramUpdateKind.raiseVariant => 'variant target set to $weight',
+      ProgramUpdateKind.raise => 'target set to $weight',
+    };
+
+String _pendingPhrase(ProgramUpdate u, String weight) => switch (u.kind) {
+      ProgramUpdateKind.add => 'Add to your program',
+      ProgramUpdateKind.addVariant =>
+        'Save as a variant of ${u.slotName ?? 'its slot'}',
+      ProgramUpdateKind.raiseVariant => 'Raise variant target to $weight',
+      ProgramUpdateKind.raise => 'Raise target to $weight',
+    };
+
+String _snackText(ProgramUpdate u, String weight, String? dayName) {
+  final name = u.exerciseName.toUpperCase();
+  return switch (u.kind) {
+    ProgramUpdateKind.add => dayName == null
+        ? '$name added to your program'
+        : '$name added to ${dayName.toUpperCase()}',
+    ProgramUpdateKind.addVariant =>
+      '$name saved as a variant of ${(u.slotName ?? '').toUpperCase()}',
+    ProgramUpdateKind.raiseVariant => '$name variant target → $weight',
+    ProgramUpdateKind.raise => '$name target → $weight',
+  };
 }
