@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
@@ -47,7 +48,14 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
 
     return LsScreen(
       topGap: LsGap.loose,
-      topbar: LsTopbar(title: dayName),
+      topbar: LsTopbar(
+        title: dayName,
+        trailing: LsIconSquare(
+          icon: Icons.copy_all,
+          semanticLabel: 'Duplicate day',
+          onTap: () => _duplicate(context),
+        ),
+      ),
       footer: LsFabPair(
         leftLabel: _editing ? 'DONE' : 'EDIT',
         leftIcon: _editing ? Icons.check : Icons.edit_outlined,
@@ -134,6 +142,32 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
               ),
       ),
     );
+  }
+
+  /// SOW-13: copy this day (slots, targets) into the same program, appended
+  /// last, then replace this editor with the copy's.
+  Future<void> _duplicate(BuildContext context) async {
+    final d = ref.read(dayProvider(widget.dayId)).value;
+    if (d == null) return;
+    final name = await promptName(
+      context,
+      title: 'DUPLICATE DAY',
+      initial: '${d.name} COPY',
+    );
+    if (name == null || name.isEmpty) return;
+    final copy =
+        await ref.read(programDaoProvider).duplicateDay(d.id, name: name);
+    ref.invalidate(programDaysProvider(widget.programId));
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    context.pushReplacement('/programs/${widget.programId}/days/${copy.id}');
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          "Copied. Changes here don't touch ${d.name.toUpperCase()}.",
+        ),
+      ));
   }
 
   Future<void> _addExercise(BuildContext context) async {

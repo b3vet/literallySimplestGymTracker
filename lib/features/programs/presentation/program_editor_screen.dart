@@ -79,7 +79,14 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
 
     return LsScreen(
       topGap: LsGap.loose,
-      topbar: LsTopbar(title: programName),
+      topbar: LsTopbar(
+        title: programName,
+        trailing: LsIconSquare(
+          icon: Icons.copy_all,
+          semanticLabel: 'Duplicate program',
+          onTap: () => _duplicate(context),
+        ),
+      ),
       footer: LsFabPair(
         leftLabel: _editing ? 'DONE' : 'EDIT',
         leftIcon: _editing ? Icons.check : Icons.edit_outlined,
@@ -177,6 +184,34 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
           ],
         ),
     );
+  }
+
+  /// SOW-13: copy this program (days, slots, targets) under a new name, then
+  /// replace this editor with the copy's so the next edits land on the copy.
+  Future<void> _duplicate(BuildContext context) async {
+    _dismissCoach();
+    final p = ref.read(programProvider(widget.programId)).value;
+    if (p == null) return;
+    final name = await promptName(
+      context,
+      title: 'DUPLICATE PROGRAM',
+      initial: '${p.name} COPY',
+    );
+    if (name == null || name.isEmpty) return;
+    final copy = await ref
+        .read(programDaoProvider)
+        .duplicateProgram(p.id, name: name);
+    ref.invalidate(programsListProvider);
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    context.pushReplacement('/programs/${copy.id}');
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          "Copied. Changes here don't touch ${p.name.toUpperCase()}.",
+        ),
+      ));
   }
 
   Future<void> _addDay(BuildContext context) async {
