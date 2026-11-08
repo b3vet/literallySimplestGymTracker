@@ -13,8 +13,9 @@ import 'exercise_options_sheet.dart';
 
 /// Topbar-style button in the leading slot of the active workout header. Sized
 /// 44×44 to match the other topbar icons. Tapping opens the exercise-options
-/// sheet, which branches to: change exercise (the full edit sheet), add/remove
-/// a set (quick volume adjustments), or skip the exercise for this session.
+/// sheet, which branches to: change exercise (the full edit sheet), switch
+/// variant (only on a slot with variants — SOW-14), add/remove a set (quick
+/// volume adjustments), insert an exercise, or skip it for this session.
 /// When the slot is overridden (substituted or edited from plan) the button
 /// adopts the accent border / icon tint so the user can see at a glance that
 /// this slot has been modified.
@@ -72,6 +73,14 @@ class SwapExerciseButton extends ConsumerWidget {
     switch (option) {
       case ExerciseOption.changeExercise:
         await _openEditSheet(context, ref, notifier);
+      case ExerciseOption.switchVariant:
+        final exerciseId = await showVariantPickerSheet(
+          context,
+          exercise: exercise,
+          unit: ref.read(settingsProvider).unit ?? WeightUnit.kg,
+        );
+        if (exerciseId == null) return;
+        await notifier.switchVariant(queueIdx, exerciseId);
       case ExerciseOption.addSet:
         await notifier.addSetToCurrent();
       case ExerciseOption.removeSet:

@@ -257,7 +257,13 @@ class _ActiveWorkoutScreenState extends ConsumerState<ActiveWorkoutScreen> {
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  if (current.isOverridden &&
+                  // On a slot with variants, say which member is running
+                  // (SOW-14) — it replaces SUBSTITUTED, which is reserved for
+                  // a swap to an exercise outside the slot.
+                  if (current.activeMember != null) ...[
+                    const SizedBox(height: 6),
+                    _VariantBadge(exercise: current),
+                  ] else if (current.isOverridden &&
                       current.previousExerciseId != null) ...[
                     const SizedBox(height: 6),
                     _SubstitutedBadge(
@@ -1068,6 +1074,32 @@ class _SubstitutedBadge extends ConsumerWidget {
     return Text(
       'SUBSTITUTED · WAS ${name.toUpperCase()}',
       style: LsType.monoMicro.copyWith(color: t.accent.accent),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+/// Which member of a slot with variants is running: `VARIANT OF <BASE>` on a
+/// variant (accent), `BASE · N VARIANTS` on the base — a quiet hint that the
+/// tune menu can switch.
+class _VariantBadge extends StatelessWidget {
+  const _VariantBadge({required this.exercise});
+  final PlannedExercise exercise;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    final active = exercise.activeMember!;
+    final n = exercise.variants.length;
+    final text = active.isBase
+        ? 'BASE · $n ${n == 1 ? 'VARIANT' : 'VARIANTS'}'
+        : 'VARIANT OF ${(exercise.baseExerciseName ?? '').toUpperCase()}';
+    return Text(
+      text,
+      style: LsType.monoMicro.copyWith(
+        color: active.isBase ? t.surface.text2 : t.accent.accent,
+      ),
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
     );
