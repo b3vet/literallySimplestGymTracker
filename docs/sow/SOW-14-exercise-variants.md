@@ -1,20 +1,20 @@
 # SOW-14 — Exercise variants on a program slot
 
-> **Status:** 🟦 Built (1.5.0+13) — simtest QA pending · **Phase:** 1 · **Tier:** Free
+> **Status:** 🟦 Built (1.5.0+14 — full-prescription variants, D-0016) — simtest QA pending · **Phase:** 1 · **Tier:** Free
 > **Owner:** berke · **Est. size:** L
 > **Strategic rationale:** "the smith machine is taken" is the most common mid-workout edit. Today it means retyping the swap and guessing the weight every time. Pre-planned variants make it two taps and keep the numbers honest, which supports the speed claim in [01-strategy-and-positioning.md](../01-strategy-and-positioning.md).
 
-Follows the [SOW-00 template](SOW-00-template.md). Product decisions: DEC-0007 (H1–H5 accepted with the plan defaults; the switch lives in the exercise-options menu, **not** in a chip row).
+Follows the [SOW-00 template](SOW-00-template.md). Product decisions: DEC-0007 (H1–H5 accepted with the plan defaults; the switch lives in the exercise-options menu, **not** in a chip row; #13 — a variant is a full exercise prescription).
 
 ---
 
 ## 1. Goal & Constraints
 - **Delivers:**
-  - A program slot (program exercise) keeps its **base** exercise and can hold 0..N **variants** — each an ordinary exercise (e.g. "Shoulder Press (Machine)") with its **own target weight and weight step**. Sets, reps and drop count come from the slot.
+  - A program slot (program exercise) keeps its **base** exercise and can hold 0..N **variants** — each an ordinary exercise (e.g. "Shoulder Press (Machine)") with its **own prescription: target sets, rep range, drop sets, weight and weight step** (DEC-0007 #13, 1.5.0+14; the earlier "sets/reps/drops come from the slot" is cancelled). A variant from build 13 has none of the new fields and inherits them from the slot.
   - In the active workout, the **exercise-options menu** (the tune button at the top left, `SwapExerciseButton`) gets a **Switch variant** entry when the slot has variants. It lists base + variants, marks the current one, and switches in one tap.
   - The summary understands variants: it offers **VARIANT TARGET → W** for a variant that beat its target (never "ADD TO DAY"), and **SAVE AS VARIANT OF X** for an exercise swapped in with "Change exercise" (H3).
   - First-ever session of any exercise or variant shows **FIRST TIME** instead of a guaranteed fake PR (H4).
-- **Hard constraints:** additive, idempotent DB migration (v7); no watch schema change; export format unchanged; free.
+- **Hard constraints:** additive, idempotent DB migrations (v7, v8); no watch schema change; export format unchanged; free.
 - **Non-goals:** switching variants from the watch; variants in onboarding templates; library-wide variants ("Machine Press is always a variant of Press"); pooling variant PRs/Stats into the base.
 
 ## 2. Competitive context
@@ -28,15 +28,15 @@ Hevy and Strong offer "replace exercise" per workout but forget it next time; Fi
 | 3 (H3) | Summary for a mid-workout "Change exercise" | **SAVE AS VARIANT OF X**; exercises *inserted* into the session still get ADD TO DAY | A swap is almost always "same slot, other equipment". |
 | 4 (H4) | First session of an exercise/variant | **FIRST TIME** label, PR badge suppressed — in the summary, History detail, the share card and the share text (DEC-0007 #10) | Otherwise every new variant produces a guaranteed fake weight PR. |
 | 5 | Where the switch lives | **Exercise-options menu** (DEC-0007), not a chip row under the title | Every other in-workout edit already lives there; keeps the screen clean. |
-| 6 | Set target after a switch | Carried over: remaining sets of the slot move to the new exercise | Plan 3 sets, 1 done on the machine, switch to the bar → bar target 2. |
+| 6 | Set target after a switch | **Superseded by DEC-0007 #13 (1.5.0+14):** switching to member M runs M's prescription for the rest of the slot — target `max(doneOn(M), M.sets − Σ doneOn(other members))`, M's rep range and drops. A slot already complete under M's plan can't switch to M. | Base 3 → variant 4 after 1 on the base → 3 on the variant; base 4 → variant 2 after 3 done → complete. Plan 3, 1 on the machine (inheriting 3), back to the bar → 2, as before. |
 | 7 | Badge under the title | On a slot with variants, `VARIANT OF <BASE>` (on a variant) replaces `SUBSTITUTED · WAS X`; on the base nothing is shown — no badge, no gap (DEC-0007 #12); a swap to a non-member keeps `SUBSTITUTED · WAS X` | The badge says which variant is active; the base needs no label (the switch is one menu away). |
 
 ## 4. Design & UX
 ### Program side
 - **Day editor tile:** `MetaPill('+N', 'VAR')` next to SETS / REPS / KG / DROP when the slot has variants.
 - **Exercise edit sheet (program mode):** a `VARIANTS · N ›` row between SAVE and DELETE. Tapping it saves the sheet's current values, then opens the **variants sheet**.
-- **Variants sheet** (`variants_sheet.dart`, `LsSheet` + `LsSheetHeader('VARIANTS', <base name>)`): one card per variant (name + weight), tap = edit, swipe left = delete (same `Dismissible` + `confirmDelete` as the day list), `+ ADD VARIANT` button. Rejections show an inline message in the sheet.
-- **Variant add/edit** reuses `showExerciseEditSheet(variantMode: true)`: only name, weight and weight step (SETS, REP MIN, REP MAX, DROP SET hidden). Autofill takes a program row's weight when one exists, else the exercise's last logged weight.
+- **Variants sheet** (`variants_sheet.dart`, `LsSheet` + `LsSheetHeader('VARIANTS', <base name>)`, subtitle `EACH WITH ITS OWN SETS, REPS & WEIGHT`): one card per variant (name, then its prescription `4×6-8 · 40 KG` and a `×N DROP` pill when it has drops), tap = edit, swipe left = delete (same `Dismissible` + `confirmDelete` as the day list), `+ ADD VARIANT` button. Rejections show an inline message in the sheet.
+- **Variant add/edit** reuses `showExerciseEditSheet(variantMode: true)` — since 1.5.0+14 (DEC-0007 #13) the **full exercise sheet**: name, SETS, REP MIN, REP MAX, WT, WEIGHT STEP and the DROP SET block, same validation as a program exercise; no VARIANTS row. A new variant is prefilled with the slot's sets, reps and drops; an inheriting (build-13) variant with the slot values it inherits. Both save all fields explicitly. Name autofill sets the weight only (a program row's weight when one exists, else the exercise's last logged weight) and leaves the prefilled prescription alone.
 
 ### Active workout
 ```
@@ -53,6 +53,7 @@ Hevy and Strong offer "replace exercise" per workout but forget it next time; Fi
                                  SHOULDER PRESS (DB)    22.5 KG
 ```
 - Selecting a row switches at once (no confirm); selecting the current row just closes the sheet.
+- Switching to a member applies **its** prescription (1.5.0+14): sets per the carry-over rule (§3 #6), its rep range and drop count — on the meta pills, the log sheet, the set chips, the watch and the Live Activity. The picker rows read each member's plan (`4×6-8 · 40 KG · DROP ×1 · BASE · CURRENT`); a member whose plan the sets done already meet is dimmed (`… · PLAN ALREADY MET`) and does nothing; the menu entry dims with `NO OTHER VARIANT HAS SETS LEFT` when that holds for every other member. The picker's subtitle reads `SETS DONE COUNT TOWARD EACH PLAN`.
 - Switching back to the base drops the override (tune button back to neutral) only when the round trip left no trace: nothing logged on any variant, and sets, reps, drops, weight and step all as planned. A member's session weight (e.g. a "Change exercise" weight edit) is remembered when the slot switches away from it and restored when it switches back — in memory only: after a resume just the current member's weight is known (one override row per slot).
 - `PREVIOUSLY N SETS ON X` banner stays. The repeat-last-set chip follows the active exercise automatically (it is keyed by `exerciseId`).
 - Skipped and inserted slots never show the entry. Variant edits made during a workout apply from the next start/resume (the queue is fixed at start).
@@ -67,9 +68,17 @@ CREATE TABLE IF NOT EXISTS program_exercise_variants (
   position INTEGER NOT NULL,
   default_weight REAL NOT NULL,
   weight_step REAL,
+  target_sets INTEGER, rep_min INTEGER, rep_max INTEGER, drop_count INTEGER, -- v8 columns, see below
   UNIQUE (program_exercise_id, exercise_id));
 CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exercise_id, position);
 ```
+Build 13 (TestFlight) created this table **without** the four prescription columns; a fresh install of 1.5.0+14 creates them right here.
+
+**DB v8 (1.5.0+14, D-0016 / DEC-0007 #13 — additive, idempotent by inspection):** `schemaV8Up` reads `PRAGMA table_info(program_exercise_variants)` and runs `ALTER TABLE program_exercise_variants ADD COLUMN <c> INTEGER` only for each of `target_sets`, `rep_min`, `rep_max`, `drop_count` that is missing. All nullable: **NULL = inherit from the slot**, so build-13 variants keep working unchanged; the editor and SAVE AS VARIANT write explicit values. No backfill.
+- Why the check: SQLite has no `ADD COLUMN IF NOT EXISTS` and a second ALTER fails. sqflite rewrites `user_version` without a hook whenever an older build opens the file — 1.4.1 stamps 6, build 13 stamps 7 — so the next launch of 14 re-runs v7 (no-op, `IF NOT EXISTS`) and v8 (no-op, columns present). On a fresh install v8 is a no-op too.
+- Schema steps may now be code (`database.dart` `_Step`), not only SQL lists; they run sequentially inside sqflite's open transaction.
+- `ProgramExerciseVariant.resolvedOn(slot)` gives the slot row as the variant runs it; `PlannedExercise.prescriptionOf(member)` does the same in a session (`baseTargetSets` … `baseDropCount` keep the slot's plan; `SlotVariant` carries the variant's own, nullable values).
+- Copies (`duplicateProgram` / `duplicateDay`) copy raw variant rows, so the new columns come along with no code change; `wipeAllData` is unchanged (it deletes rows).
 - **Day rule (D-0011, dispatcher default — to confirm with Berke):** within one program day an exercise is used **at most once as a variant, and never as both a variant and a base**. The DAO enforces it in every direction and throws `VariantConflict` (shown inline in the variants sheet, as a snackbar in the day editor and the summary): `addVariant` / `editVariant` (`sameAsBase`, `duplicate`, `baseOfAnotherSlot`, `variantOfAnotherSlot`), `addProgramExercise` and a base rename in `updateProgramExercise` (`variantOfAnotherSlot`; a write that keeps the slot's exercise — a summary raise — is never refused), and the summary's ADD TO DAY / SAVE AS VARIANT for an exercise inserted or swapped into the workout (refused → stays pending). Two slots sharing the same **base** stay allowed, as in 1.4.1 (that pre-existing case still pools sets by exercise, unchanged).
   - **Read guard:** a day that already breaks the rule (written before it, e.g. a 1.4.1 rename of a base to its own or another slot's variant) is not migrated; `listVariantsForDay` / `listVariants` hide the conflicting variant — the base wins, else the first variant in day order — and `PlannedExercise.members` dedupes by exercise as a last line of defence, so the picker never shows a dead duplicate row. `duplicateProgram` / `duplicateDay` don't copy such a variant, so a copy looks exactly like its source.
 - `IF NOT EXISTS` on both, no `ALTER TABLE`: sqflite rewrites `user_version` on downgrade without calling a hook, so 1.4.1 → 1.5.0 → 1.4.1 → 1.5.0 re-runs the v7 step against an existing table.
@@ -78,6 +87,8 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 - Added to the dev-reset delete order (`maintenance.dart`).
 
 ## 6. Implementation plan
+(1.5.0+14 additions — DEC-0007 #13: `schemaV8Up` + `kDbVersion = 8`; variant prescription on `ProgramExerciseVariant` / DAO; full sheet in `variantMode`; `SlotVariant` / `PlannedExercise` prescriptions, `carryOverTargetSets` rule, `canSwitchTo`; summary `variantPlan`, SAVE AS VARIANT prescription.)
+
 1. `core/db`: `schemaV7Up`, `_dbVersion = 7`, shared `createSchema` / `upgradeSchema`.
 2. `programs/domain/program_exercise_variant.dart`: `ProgramExerciseVariant` + `ProgramExerciseVariantView`.
 3. `programs/data/program_dao.dart`: `listVariants`, `listVariantsForDay`, `addVariant` / `updateVariant` (reject base, duplicate, or another slot's base on the same day — `VariantConflict`), `deleteVariant`; `updateProgramExercise` deletes a variant that became the base; `duplicateProgram` / `duplicateDay` copy variants.
@@ -94,6 +105,7 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 - [ ] Deleting a slot, day or program cascades its variants.
 - [ ] The **Switch variant** menu entry appears only on a non-inserted, non-skipped slot with ≥1 variant; it lists base + variants with the current one marked.
 - [ ] Switching updates title, weight pill and badge; remaining sets carry over; the cursor advances when the variant's target is met; a resume rebuilds the same state.
+- [ ] (1.5.0+14) A variant has its own sets, reps and drops; switching applies them (target per §3 #6); a build-13 variant inherits the slot's; build 13 → 14 keeps every variant; 1.4.1 ↔ 14 and 13 ↔ 14 flips reopen cleanly.
 - [ ] Switching back to the base with nothing logged on the variant clears the override (neutral tune button).
 - [ ] Summary: a variant that beat its target offers VARIANT TARGET → W, apply changes only the variant row, undo restores it; a variant is never offered ADD TO DAY; a "Change exercise" swap offers SAVE AS VARIANT OF X and undo deletes exactly that variant; an inserted exercise still offers ADD TO DAY.
 - [ ] First exposure of an exercise shows FIRST TIME, not PR; a raise is still offered when the target is beaten.
@@ -103,6 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
 - Controller (`test/variant_switch_test.dart`): carry-over table (0 done; 1 on base; back again; add set on variant; base target 1), override persistence + resume, cursor advance, revert on return.
 - Widgets: `variantMode` hides set/rep pickers; variants sheet lists + adds; VARIANTS row returns `manageVariants`; options menu entry hidden without variants, lists base + variants with current marked, selecting calls `switchVariant`.
 - Summary (`test/summary_apply_state_test.dart`): raiseVariant / addVariant apply + undo, no ADD for variants, inserted still ADD, apply-all counts; first-exposure suppression; a refused ADD stays pending; swap-chain attribution.
+- D-0016 (1.5.0+14): `variants_migration_test` (build 13 → v8 with variants: values kept, NULLs inherit; v6 and v7 downgrade resets re-run v8 as a no-op; fresh create has the columns, v8 no-op; `wipeAllData` on an upgraded file), `variants_dao_test` / `program_copy_test` (prescription stored, edited, kept by a raise, copied), `variants_editor_widget_test` (full sheet in variantMode, prefill from the slot, own prescription tile + edit), `variant_switch_test` (carry-over table with different set counts per member, refusal, no drift, override + resume + cursor + watch snapshot, base restore), `variant_menu_widget_test` (rows show plans, met plan dimmed, entry dimmed), `summary_apply_state_test` (variantPlan, raise keeps the prescription and undo restores every field, SAVE AS VARIANT stores the override's prescription / falls back to what was done).
 - Fix round D-0011: day rule + read guard (`variants_dao_test`, `program_copy_test`, `program_duplicate_widget_test`), complete-slot switch and switch-back rules (`variant_switch_test`, `variant_menu_widget_test`), orphaned workout on resume / delete + warning (`orphan_workout_test`), variant card layout with real fonts at 390pt and the UNDO snackbar lifecycle (`summary_screen_widget_test`).
 - **Manual (simtest, plan §F), updated for the menu placement:**
   - **VAR-03:** in the active workout, open the tune (exercise options) menu: **Switch variant** is listed only on the slot that has variants; on other slots it is absent.
@@ -122,16 +135,25 @@ CREATE INDEX IF NOT EXISTS idx_pev_pe ON program_exercise_variants(program_exerc
     - **Polish (QA observations of the 2026-11-08 retest):** VAR-17 in the DARK theme — the snackbar's UNDO label is clearly readable (dark on the light snackbar; light on dark in LIGHT); VAR-14 — the dimmed row reads the whole 'ALL SETS DONE ON <BASE>' (wrapping); VAR-15 — after the 40 → 42.5 edit the picker lists the base as '42.5 KG · BASE · CURRENT', and after switching away and opening the picker again the base row still shows 42.5; RISK-05 cold path — Home's LAST strip shows the closed session on the same launch.
     - **VAR-19 (FIRST TIME everywhere, DEC-0007 #10):** finish a workout with a variant logged for the first time and a lift that beat its history: the summary card reads FIRST TIME / PR as before; then History → that session: FIRST TIME beside the new variant's name, nothing beside the others; the share card (from History and from the summary) shows FIRST TIME on the new variant and the PR box only on the real record, and the PR total counts only the real record; the share text reads `(first time)` on that line.
 
+  - **Round D-0016 (1.5.0+14, DEC-0007 #13) — new checks:**
+    - **VAR-20 (full modal):** day editor → SHOULDER PRESS (3 × 8-10, 60 kg) → VARIANTS → + ADD VARIANT: the sheet shows SETS, REP MIN, REP MAX, WT, WEIGHT STEP and DROP SET, prefilled 3 / 8 / 10 / OFF. Name 'Shoulder Press (Smith)', SETS 4, REP MIN 6, REP MAX 8, WT 50, DROP SET ON (1) → SAVE → the card reads `4×6-8 · 50 KG` with a `×1 DROP` pill. A rep max below the rep min can't be saved (same as an exercise). Tap the card → the sheet opens on 4 / 6 / 8 / 50 / ON 1.
+    - **VAR-21 (switch with a different set count):** workout on that day, log 1 set on SHOULDER PRESS → tune → Switch variant: the Smith row reads `4×6-8 · 50 KG · DROP ×1` → tap it: the pills read **3 SETS · 6-8 REPS · 50 KG** and the drop pill, LOG DROP SET; the log sheet's target line reads 6-8 and it logs a top set plus one drop; the watch shows the Smith with 3 sets and 6-8 reps; the Live Activity reads 6-8. Back to the base: 3 SETS · 8-10, no drop. With a 2-set variant (e.g. 'Shoulder Press (Cable)' 2 × 12) and 2 sets done on the base, its row is dimmed `… · PLAN ALREADY MET` and does nothing; with every other member met the entry reads `NO OTHER VARIANT HAS SETS LEFT`.
+    - **VAR-22 (summary on a variant's own plan):** finish VAR-21 with the Smith above 50 kg: the Smith card's expanded TARGET line reads `TARGET 4 × 6-8 @ 50 KG` (its own rep range, not the slot's 8-10); VARIANT TARGET 50 → W is offered; APPLY → the variants sheet still reads `4×6-8` with the new weight and the drop pill; UNDO restores `4×6-8 · 50 KG`. And: Change exercise on another slot to 'Cable Row' with 3 × 10-12 and drops on → log → finish → SAVE AS VARIANT OF … → its card in the variants sheet reads `3×10-12 · <top> KG` + `×1 DROP`.
+    - **MIG-03 (build 13 → 14):** on a simulator with 1.5.0 (13) installed, set up a slot with two variants (one with a step), log a workout that switches to one; install 14 over it: the variants sheet lists both, each reading the slot's sets/reps (`3×8-10 · …`), weights and steps unchanged; History intact; a workout switch to a variant still carries the slot's sets and reps; editing one and saving gives it explicit values. `sqlite3 … "PRAGMA user_version"` → 8; `PRAGMA table_info(program_exercise_variants)` lists target_sets, rep_min, rep_max, drop_count.
+    - **MIG-04 (1.4.1 ↔ 14 flip):** with 14's data (a variant with its own 4 × 6-8), install 1.4.1 (App Store) over it → launches, programs and History intact; install 14 again → launches with no migration error, the variant still reads `4×6-8`. Repeat once with 13 instead of 1.4.1 (13 shows the variant with the slot's sets/reps — expected); back on 14 it reads `4×6-8` again.
+
+
 ## 9. Risks & mitigations
 | Risk | Likelihood | Mitigation |
 |---|---|---|
 | Downgrade to 1.4.1 then back crashes the v7 step | Med (Berke flips builds) | `IF NOT EXISTS`, no `ALTER`; test reopens a DB forced to `user_version = 6`. |
+| A re-run of v8 fails on a duplicate column (after 1.4.1 or 13 opened the file) | Med (Berke flips builds) | `PRAGMA table_info` check, ALTER only the missing columns; tests reset to v6 and v7 and reopen (MIG-04). |
 | Watch shows a stale exercise right after a switch | Low | A set is attributed by its own `exerciseId` (as with a swap); the snapshot listener pushes the new queue. |
 | Same variant on two slots of one day | — | Refused by the DAO (day rule, §5); pre-rule data is hidden on read. |
 | Variant edited mid-workout | Low | Applies from the next start/resume (documented). |
 
 ## 10. Definition of done
-Analyze clean, tests green, simtest VAR-01…VAR-17 + REG-01…REG-07 + RISK-01…05 pass. Mark SOW-14 in [02-roadmap.md](../02-roadmap.md); v7 taken (SOW-08/-09/-10 move to v8+).
+Analyze clean, tests green, simtest VAR-01…VAR-22 + MIG-01…MIG-04 + REG-01…REG-07 + RISK-01…05 pass. Mark SOW-14 in [02-roadmap.md](../02-roadmap.md); v7 and v8 taken (SOW-08/-09/-10 move to v9+).
 
 ## 11. Build notes (deviations from the 2026-11-08 plan)
 - **Menu, not chip row (DEC-0007).** Plan step E9 ("variant chip row") became "variant entry in the edit menu": `ExerciseOption.switchVariant` + `showVariantPickerSheet` in `exercise_options_sheet.dart`, wired in `swap_exercise_button.dart`. QA steps VAR-03 / VAR-04 / VAR-12 are rewritten for it in §8.
@@ -148,3 +170,9 @@ Analyze clean, tests green, simtest VAR-01…VAR-17 + REG-01…REG-07 + RISK-01�
 - **Orphaned workout (review #4, QA RISK-05).** A workout whose program/day is deleted is closed by the delete itself (`closeIfDetached`, after a warning in the DELETE? dialog), or on the next resume if the app died first: completed with `ended_at` = its last set's `logged_at` (abandoned when empty), rest timer dismissed and every Live Activity ended (`endAllActivities` — a cold start doesn't know the old activity's id).
 - **Carry-over on a complete slot (review #2).** No floor of 1: a complete slot carries nothing over and the menu disables Switch variant there, so round trips can't inflate the target.
 - **Commit order:** the v7 migration and variant DAO were committed after SOW-13's commits (see SOW-13 §11).
+- **Full-prescription variants (D-0016, DEC-0007 #13, 1.5.0+14).** Cancels "sets/reps/drops come from the slot". DB v8 adds nullable `target_sets` / `rep_min` / `rep_max` / `drop_count` (§5); the variant sheet is the full exercise sheet; a switch runs the member's prescription. Choices made where the request left room:
+  - **Carry-over** is `max(doneOn(M), M.sets − Σ doneOn(others))` with M's planned sets, so a session "Add set" (or a set edit via Change exercise) stays with the member it was made on instead of travelling with the slot (`variant_switch_test` "a set added on the variant stays there": 3, was 4). Only the **weight** is remembered across switches, as before; a rep edit on the base via Change exercise is not (back on the base it runs the plan's reps).
+  - **Complete under M's plan** → that picker row is dimmed (`PLAN ALREADY MET`) and `switchVariant` ignores it, rather than switching to a 0-set slot the lifter could not leave; the menu entry dims (`NO OTHER VARIANT HAS SETS LEFT`) when no other member has a set left. Same intent as review #2.
+  - **Summary raise:** there is no rep-range progression rule in `summary_controller` (base or variant): a raise is offered when the top weight beats the target or is a weight PR. It stays that way for variants, against the variant's own weight; the variant's own rep range and drops drive its TARGET line (`variantPlan`) and are kept by the raise and restored by undo.
+  - **SAVE AS VARIANT** stores the swap's override targets (sets, reps, drops) while the slot still runs it; if the slot has moved on (the override now runs something else) it stores what was done — set count, the top sets' rep range, the deepest drop chain.
+  - **Name autofill in the variant sheet** fills the weight only, so the prescription prefilled from the slot is not replaced by another program row's sets/reps.
