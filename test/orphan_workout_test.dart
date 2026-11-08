@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/core/theme/app_theme.dart';
+import 'package:ls_workout_tracker/features/home/application/home_provider.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/programs/presentation/program_delete.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
@@ -109,6 +110,34 @@ void main() {
       expect(la.endAllCalls, 1);
       expect(prefs.getInt(kRestKey), isNull, reason: 'rest cleared');
       expect(c.read(restTimerProvider).running, isFalse);
+    });
+
+    test('Home LAST strip picks up the closed session (QA RISK-05 obs.)',
+        () async {
+      final (first, prefs, _) = await container();
+      final sid = await startAndLog(first, 2);
+      await dao.deleteProgram(programId);
+      first.dispose();
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+
+      // Relaunch: Home reads LAST while the resume is still closing the
+      // orphan, so its first answer predates the close.
+      final la = _FakeLiveActivity();
+      final c = ProviderContainer(overrides: [
+        databaseProvider.overrideWithValue(db),
+        sharedPreferencesProvider.overrideWithValue(prefs),
+        liveActivityControllerProvider.overrideWithValue(la),
+      ]);
+      addTearDown(c.dispose);
+      c.listen(lastSessionSummaryProvider, (_, _) {});
+      final early = c.read(lastSessionSummaryProvider.future);
+      await c.read(activeSessionProvider.future);
+      await early;
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      expect((await sessionRow(sid)).status, SessionStatus.completed);
+      final last = await c.read(lastSessionSummaryProvider.future);
+      expect(last?.session.id, sid);
+      expect(last?.setCount, 2);
     });
 
     test('abandons it when nothing was logged', () async {

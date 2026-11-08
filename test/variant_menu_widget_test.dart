@@ -1,4 +1,7 @@
+import 'dart:math' show max, min;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderParagraph;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/core/theme/app_theme.dart';
@@ -223,5 +226,73 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('REMAINING SETS CARRY OVER'), findsNothing);
     expect(fake.calls, isEmpty);
+  });
+
+  // QA VAR-15 observation: the picker listed the plan weight, not the one
+  // the session runs with.
+  testWidgets('picker shows session weights', (tester) async {
+    await pump(
+      tester,
+      _slot().copyWith(
+        defaultWeightKg: 62.5, // a "Change exercise" weight edit on the base
+        memberWeights: const {'machine': MemberWeight(weightKg: 45)},
+      ),
+    );
+    await tester.tap(find.text('SWITCH VARIANT'));
+    await tester.pumpAndSettle();
+    expect(find.text('62.5 KG · BASE · CURRENT'), findsOneWidget);
+    expect(find.text('45 KG'), findsOneWidget, reason: 'visited earlier');
+    expect(find.text('22.5 KG'), findsOneWidget, reason: 'not visited: plan');
+  });
+
+  // QA VAR-14 observation: the dimmed row's subtitle was ellipsized.
+  testWidgets('ALL SETS DONE ON <BASE> wraps instead of truncating', (
+    tester,
+  ) async {
+    await pump(
+      tester,
+      _slot(),
+      logged: [
+        for (var i = 0; i < 3; i++)
+          WorkoutSet(
+            id: 's$i',
+            sessionId: 's',
+            exerciseId: 'bar',
+            setIndex: i,
+            reps: 8,
+            weightKg: 60,
+            rir: 1,
+            loggedAt: DateTime(2026),
+          ),
+      ],
+    );
+    final p = tester.renderObject<RenderParagraph>(
+      find.text('ALL SETS DONE ON SHOULDER PRESS'),
+    );
+    expect(p.didExceedMaxLines, isFalse);
+  });
+
+  test('snackbar action reads on the snackbar in both themes', () {
+    double contrast(Color a, Color b) {
+      final la = a.computeLuminance(), lb = b.computeLuminance();
+      return (max(la, lb) + 0.05) / (min(la, lb) + 0.05);
+    }
+
+    for (final (s, b) in [
+      (lsDark, Brightness.dark),
+      (lsLight, Brightness.light),
+    ]) {
+      final theme = LsTheme.buildThemeData(
+        s: s,
+        a: lsAccentSpec(LsAccent.red),
+        brightness: b,
+      );
+      expect(
+        contrast(theme.snackBarTheme.actionTextColor!,
+            theme.colorScheme.inverseSurface),
+        greaterThanOrEqualTo(4.5),
+        reason: '$b',
+      );
+    }
   });
 }

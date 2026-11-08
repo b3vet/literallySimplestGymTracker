@@ -155,6 +155,13 @@ class PlannedExercise {
   bool isCompleteIn(List<WorkoutSet> logged) =>
       completedSetsFor(logged, exerciseId) >= targetSets;
 
+  /// The weight [m] runs with in this session: the slot's current weight for
+  /// the active member, a remembered one for a member switched away from, else
+  /// its planned weight — what [ActiveWorkoutController.switchVariant] applies.
+  double sessionWeightOf(SlotVariant m) => m.exerciseId == exerciseId
+      ? defaultWeightKg
+      : memberWeights[m.exerciseId]?.weightKg ?? m.defaultWeightKg;
+
   /// The member currently running, or null (no variants, or swapped to an
   /// exercise outside the slot with "Change exercise").
   SlotVariant? get activeMember {

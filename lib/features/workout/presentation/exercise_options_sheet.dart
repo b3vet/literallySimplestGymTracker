@@ -99,6 +99,8 @@ class _ExerciseOptionsSheet extends StatelessWidget {
             subtitle: canSwitchVariant
                 ? 'Now: ${exercise.exerciseName}'
                 : 'All sets done on ${exercise.exerciseName}',
+            // Wraps instead of losing the name (QA VAR-14).
+            subtitleMaxLines: 3,
             onTap: canSwitchVariant
                 ? () => Navigator.pop(context, ExerciseOption.switchVariant)
                 : null,
@@ -201,7 +203,8 @@ class _VariantPickerSheet extends StatelessWidget {
                         : Icons.alt_route,
                     label: members[i].name,
                     subtitle: [
-                      WeightConv.format(members[i].defaultWeightKg, unit),
+                      WeightConv.format(
+                          exercise.sessionWeightOf(members[i]), unit),
                       if (members[i].isBase) 'base',
                       if (members[i].exerciseId == exercise.exerciseId)
                         'current',
@@ -234,11 +237,13 @@ class _OptionRow extends StatelessWidget {
     required this.onTap,
     this.danger = false,
     this.selected = false,
+    this.subtitleMaxLines = 1,
   });
 
   final IconData icon;
   final String label;
   final String subtitle;
+  final int subtitleMaxLines;
   final VoidCallback? onTap;
   final bool danger;
 
@@ -302,7 +307,7 @@ class _OptionRow extends StatelessWidget {
                           style: LsType.monoMeta.copyWith(
                             color: t.surface.text2,
                           ),
-                          maxLines: 1,
+                          maxLines: subtitleMaxLines,
                           overflow: TextOverflow.ellipsis,
                         ),
                       ],

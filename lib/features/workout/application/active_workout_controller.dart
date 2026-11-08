@@ -5,10 +5,16 @@ import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../main.dart' show databaseProvider;
+import '../../history/application/history_provider.dart'
+    show historyListProvider;
+import '../../home/application/home_provider.dart'
+    show lastSessionSummaryProvider;
 import '../../programs/application/programs_provider.dart';
 import '../../programs/data/program_dao.dart';
 import '../../programs/domain/program_exercise.dart';
 import '../../programs/domain/program_exercise_variant.dart';
+import '../../stats/application/stats_provider.dart'
+    show exerciseProgressionProvider, loggedExercisesProvider;
 import '../data/workout_dao.dart';
 import '../domain/active_session.dart';
 import '../domain/session_exercise_override.dart';
@@ -263,6 +269,13 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       }
       await _workoutDao.completeSession(sessionId, endedAt: last);
     }
+    // What aggregates completed sessions may have been read before the close
+    // (on a cold start Home's LAST strip races the resume — QA RISK-05).
+    ref
+      ..invalidate(lastSessionSummaryProvider)
+      ..invalidate(historyListProvider)
+      ..invalidate(loggedExercisesProvider)
+      ..invalidate(exerciseProgressionProvider);
     ref.read(restTimerProvider.notifier).dismiss();
     await _liveActivity.endAll();
   }
