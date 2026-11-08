@@ -259,6 +259,17 @@ class ProgramDao {
     return e;
   }
 
+  /// Case-insensitive lookup by name; never creates a row.
+  Future<Exercise?> findExerciseByName(String name) async {
+    final rows = await _db.query(
+      'exercises',
+      where: 'name = ? COLLATE NOCASE',
+      whereArgs: [name.trim()],
+      limit: 1,
+    );
+    return rows.isEmpty ? null : Exercise.fromRow(rows.first);
+  }
+
   Future<List<Exercise>> listExercises() async {
     final rows = await _db.query('exercises', orderBy: 'name COLLATE NOCASE');
     return rows.map(Exercise.fromRow).toList();

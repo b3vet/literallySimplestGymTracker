@@ -13,6 +13,7 @@ import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program_exercise.dart';
 import 'exercise_edit_sheet.dart';
+import 'variants_sheet.dart';
 
 class DayEditorScreen extends ConsumerStatefulWidget {
   const DayEditorScreen({
@@ -201,6 +202,10 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
     ProgramExerciseView v,
   ) async {
     final unit = ref.read(settingsProvider).unit ?? WeightUnit.kg;
+    final variants = await ref
+        .read(programDaoProvider)
+        .listVariants(v.pe.id);
+    if (!context.mounted) return;
     final result = await showExerciseEditSheet(
       context,
       unit: unit,
@@ -212,6 +217,7 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       initialWeightStepKg: v.pe.weightStepKg,
       initialDropCount: v.pe.dropCount,
       canDelete: true,
+      variantCount: variants.length,
     );
     if (result == null) return;
     if (result.delete) {
@@ -236,6 +242,17 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
           );
     }
     ref.invalidate(dayExercisesProvider(widget.dayId));
+    ref.invalidate(dayVariantsProvider(widget.dayId));
+    // VARIANTS row: the slot's edits are saved above, then the variants sheet
+    // opens on the (possibly renamed) base.
+    if (result.manageVariants && !result.delete && context.mounted) {
+      await showVariantsSheet(
+        context,
+        programExerciseId: v.pe.id,
+        baseName: result.name.trim(),
+      );
+      ref.invalidate(dayVariantsProvider(widget.dayId));
+    }
   }
 }
 
@@ -262,6 +279,11 @@ class _ExerciseTile extends ConsumerWidget {
         ? '${pe.targetRepsMin}'
         : '${pe.targetRepsMin}-${pe.targetRepsMax}';
     final weightValue = _weightValue(pe.defaultWeightKg, unit);
+    final variantCount = ref
+            .watch(dayVariantsProvider(pe.programDayId))
+            .value?[pe.id]
+            ?.length ??
+        0;
 
     final card = LsCard(
       onTap: editing ? null : onTap,
@@ -298,6 +320,8 @@ class _ExerciseTile extends ConsumerWidget {
                     MetaPill(value: weightValue, text: unit.short),
                     if (pe.dropCount > 0)
                       MetaPill(value: '×${pe.dropCount}', text: 'DROP'),
+                    if (variantCount > 0)
+                      MetaPill(value: '+$variantCount', text: 'VAR'),
                   ],
                 ),
               ],

@@ -5,6 +5,7 @@ import '../data/program_dao.dart';
 import '../domain/program.dart';
 import '../domain/program_day.dart';
 import '../domain/program_exercise.dart';
+import '../domain/program_exercise_variant.dart';
 
 final programDaoProvider = Provider<ProgramDao>((ref) {
   return ProgramDao(ref.watch(databaseProvider));
@@ -46,4 +47,17 @@ final dayProvider =
 final dayExercisesProvider =
     FutureProvider.family<List<ProgramExerciseView>, String>((ref, dayId) {
   return ref.watch(programDaoProvider).listProgramExercises(dayId);
+});
+
+/// One slot's variants, in order (SOW-14).
+final slotVariantsProvider = FutureProvider.family<
+    List<ProgramExerciseVariantView>, String>((ref, programExerciseId) {
+  return ref.watch(programDaoProvider).listVariants(programExerciseId);
+});
+
+/// Every slot's variants on a day, keyed by slot id (SOW-14). Drives the
+/// "+N VAR" pill in the day editor.
+final dayVariantsProvider = FutureProvider.family<
+    Map<String, List<ProgramExerciseVariantView>>, String>((ref, dayId) {
+  return ref.watch(programDaoProvider).listVariantsForDay(dayId);
 });
