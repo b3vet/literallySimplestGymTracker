@@ -167,9 +167,20 @@ class _SummaryBodyState extends ConsumerState<_SummaryBody> {
   Widget build(BuildContext context) {
     final d = widget.summary;
     final unit = widget.unit;
+    // The share card follows the History card's rule: a first exposure reads
+    // FIRST TIME (on the first-ever workout too — every lift is one there).
     final prs = <String, ExercisePR>{
       for (final e in d.exercises)
-        if (e.pr != null) e.exerciseId: e.pr!,
+        if (e.pr != null)
+          e.exerciseId: e.pr!
+        else if (e.isFirstExposure || d.isFirstEverSession)
+          e.exerciseId: ExercisePR(
+            exerciseId: e.exerciseId,
+            kind: PrKind.weight,
+            weightKg: e.topWeightKg,
+            reps: e.topReps,
+            isFirstExposure: true,
+          ),
     };
 
     // Headless snapshot for outbound share (text + branded card), built from

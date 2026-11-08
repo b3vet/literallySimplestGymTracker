@@ -1,7 +1,10 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ls_workout_tracker/features/history/application/history_provider.dart'
+    show sessionDetailProvider;
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/programs/domain/program_exercise_variant.dart';
+import 'package:ls_workout_tracker/features/share/domain/workout_summary.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart'
     show sessionPrsProvider;
 import 'package:ls_workout_tracker/features/workout/application/pr_detector.dart';
@@ -442,6 +445,32 @@ void main() {
       expect(machine.isFirstExposure, isFalse);
       expect(s.prCount, 2,
           reason: 'machine 45 > 40 and cable 55 > 50; press is not counted');
+    });
+
+    test('DEC-0007 #10: History detail and its share card follow the summary',
+        () async {
+      // History detail builds its share card straight from the detector, as
+      // SessionDetailScreen does — it must agree with the summary.
+      final prs = await container.read(sessionPrsProvider(vSessionId).future);
+      final detail =
+          await container.read(sessionDetailProvider(vSessionId).future);
+      final share = WorkoutSummary.fromSession(
+        date: detail!.session.startedAt,
+        duration: detail.session.duration,
+        sets: detail.sets,
+        exerciseNames: detail.exerciseNames,
+        prs: prs,
+      );
+      final press =
+          share.lines.singleWhere((l) => l.exercise == 'Shoulder Press');
+      expect(press.isPr, isFalse, reason: 'first exposure: no PR badge');
+      expect(press.isFirstExposure, isTrue);
+      final machine = share.lines
+          .singleWhere((l) => l.exercise == 'Shoulder Press (Machine)');
+      expect(machine.isPr, isTrue);
+      expect(machine.isFirstExposure, isFalse);
+      final s = await container.read(sessionSummaryProvider(vSessionId).future);
+      expect(share.prCount, s!.prCount);
     });
 
     test('H4: a first exposure still offers a raise when it beats the target',

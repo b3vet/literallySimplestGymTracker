@@ -54,7 +54,11 @@ String buildSummaryText(WorkoutSummary s, WeightUnit unit) {
     for (final l in s.lines) {
       final name = l.exercise.padRight(nameWidth);
       final set = '${WeightConv.format(l.weightKg, unit)} × ${l.reps}';
-      final pr = l.isPr ? '  (PR)' : '';
+      final pr = l.isPr
+          ? '  (PR)'
+          : l.isFirstExposure
+              ? '  (first time)'
+              : '';
       buf.writeln('$name  $set$pr');
     }
   }

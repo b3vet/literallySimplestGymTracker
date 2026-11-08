@@ -24,6 +24,11 @@ class ExercisePR {
   final bool isFirstExposure;
 
   bool get isPr => kind != PrKind.none;
+
+  /// The H4 rule every surface uses (summary, History detail, share card and
+  /// text): a record only when there was history to beat. A first exposure
+  /// reads FIRST TIME instead (DEC-0007 #10).
+  bool get countsAsPr => isPr && !isFirstExposure;
 }
 
 class PrDetector {
