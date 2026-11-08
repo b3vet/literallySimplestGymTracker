@@ -1,5 +1,37 @@
 import '../../programs/domain/program_exercise.dart';
+import '../../programs/domain/program_exercise_variant.dart';
 import 'workout_set.dart';
+
+/// One exercise a slot can run as (SOW-14): its base, or one of its variants.
+/// Each carries its OWN target weight + step; sets/reps/drops are the slot's.
+class SlotVariant {
+  const SlotVariant({
+    this.variantId,
+    required this.exerciseId,
+    required this.name,
+    required this.defaultWeightKg,
+    this.weightStepKg,
+  });
+
+  /// `program_exercise_variants.id`; null for the slot's base exercise.
+  final String? variantId;
+  final String exerciseId;
+  final String name;
+  final double defaultWeightKg;
+
+  /// kg; null → the slot's step.
+  final double? weightStepKg;
+
+  bool get isBase => variantId == null;
+
+  factory SlotVariant.fromView(ProgramExerciseVariantView v) => SlotVariant(
+        variantId: v.variant.id,
+        exerciseId: v.variant.exerciseId,
+        name: v.exerciseName,
+        defaultWeightKg: v.variant.defaultWeightKg,
+        weightStepKg: v.variant.weightStepKg,
+      );
+}
 
 class PlannedExercise {
   const PlannedExercise({
@@ -17,6 +49,11 @@ class PlannedExercise {
     this.position = 0,
     this.isInserted = false,
     this.dropCount = 0,
+    this.baseExerciseId,
+    this.baseExerciseName,
+    this.baseDefaultWeightKg,
+    this.baseWeightStepKg,
+    this.variants = const [],
   });
   final String programExerciseId;
   final String exerciseId;
@@ -60,10 +97,52 @@ class PlannedExercise {
   /// the program/override `drop_count` so it survives swaps/edits/inserts.
   final int dropCount;
 
+  /// The program slot's own (base) exercise and its planned weight/step, kept
+  /// verbatim while [exerciseId] follows swaps and variant switches (SOW-14).
+  /// Null on slots built without a template row (inserted exercises, tests).
+  final String? baseExerciseId;
+  final String? baseExerciseName;
+  final double? baseDefaultWeightKg;
+  final double? baseWeightStepKg;
+
+  /// The slot's variants in program order (empty for most slots). Loaded at
+  /// start/resume; edits made mid-workout apply from the next start/resume.
+  final List<SlotVariant> variants;
+
   /// Whether this slot is a drop-set exercise.
   bool get isDropSet => dropCount > 0;
 
-  factory PlannedExercise.fromView(ProgramExerciseView v) => PlannedExercise(
+  /// True when the in-workout menu should offer "Switch variant".
+  bool get hasVariants =>
+      variants.isNotEmpty && !isInserted && baseExerciseId != null;
+
+  /// Base first, then the variants. Empty when [hasVariants] is false.
+  List<SlotVariant> get members => hasVariants
+      ? [
+          SlotVariant(
+            exerciseId: baseExerciseId!,
+            name: baseExerciseName ?? exerciseName,
+            defaultWeightKg: baseDefaultWeightKg ?? defaultWeightKg,
+            weightStepKg: baseWeightStepKg,
+          ),
+          ...variants,
+        ]
+      : const [];
+
+  /// The member currently running, or null (no variants, or swapped to an
+  /// exercise outside the slot with "Change exercise").
+  SlotVariant? get activeMember {
+    for (final m in members) {
+      if (m.exerciseId == exerciseId) return m;
+    }
+    return null;
+  }
+
+  factory PlannedExercise.fromView(
+    ProgramExerciseView v, {
+    List<ProgramExerciseVariantView> variants = const [],
+  }) =>
+      PlannedExercise(
         programExerciseId: v.pe.id,
         exerciseId: v.pe.exerciseId,
         exerciseName: v.exerciseName,
@@ -74,6 +153,11 @@ class PlannedExercise {
         weightStepKg: v.pe.weightStepKg,
         position: v.pe.position.toDouble(),
         dropCount: v.pe.dropCount,
+        baseExerciseId: v.pe.exerciseId,
+        baseExerciseName: v.exerciseName,
+        baseDefaultWeightKg: v.pe.defaultWeightKg,
+        baseWeightStepKg: v.pe.weightStepKg,
+        variants: [for (final x in variants) SlotVariant.fromView(x)],
       );
 
   PlannedExercise copyWith({
@@ -111,6 +195,11 @@ class PlannedExercise {
         position: position ?? this.position,
         isInserted: isInserted ?? this.isInserted,
         dropCount: dropCount ?? this.dropCount,
+        baseExerciseId: baseExerciseId,
+        baseExerciseName: baseExerciseName,
+        baseDefaultWeightKg: baseDefaultWeightKg,
+        baseWeightStepKg: baseWeightStepKg,
+        variants: variants,
       );
 }
 

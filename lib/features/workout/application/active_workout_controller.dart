@@ -8,6 +8,7 @@ import '../../../main.dart' show databaseProvider;
 import '../../programs/application/programs_provider.dart';
 import '../../programs/data/program_dao.dart';
 import '../../programs/domain/program_exercise.dart';
+import '../../programs/domain/program_exercise_variant.dart';
 import '../data/workout_dao.dart';
 import '../domain/active_session.dart';
 import '../domain/session_exercise_override.dart';
@@ -55,6 +56,36 @@ Cursor cursorAfter(List<PlannedExercise> queue, List<WorkoutSet> loggedSets) {
     }
   }
   return Cursor(exerciseIdx: queue.length, setIdx: 0);
+}
+
+/// Set target for [toExerciseId] when a slot switches between its members
+/// (base, variants — and whatever it runs as now), so the slot's remaining
+/// sets carry over instead of restarting (SOW-14). Pure + top-level for tests.
+///
+/// The slot's total is its current target plus every set already done on the
+/// OTHER members; the new member's target is that total minus what was done on
+/// every member except itself. Plan 3, 1 done on the machine, switch to the
+/// bar → bar target 2. Floors at 1 so a switch always leaves a set to log.
+/// Completed sets count distinct groups, so a drop set counts once.
+int carryOverTargetSets(
+  PlannedExercise slot,
+  String toExerciseId,
+  List<WorkoutSet> logged,
+) {
+  final members = <String>{
+    for (final m in slot.members) m.exerciseId,
+    slot.exerciseId,
+    toExerciseId,
+  };
+  var total = slot.targetSets;
+  var doneElsewhere = 0;
+  for (final m in members) {
+    final done = completedSetsFor(logged, m);
+    if (m != slot.exerciseId) total += done;
+    if (m != toExerciseId) doneElsewhere += done;
+  }
+  final target = total - doneElsewhere;
+  return target < 1 ? 1 : target;
 }
 
 /// Fractional queue `position` that places a newly inserted exercise
@@ -176,7 +207,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       return null;
     }
     final overrides = await _workoutDao.overridesForSession(session.id);
-    final queue = _buildQueue(planned, overrides);
+    final variants =
+        await _programDao.listVariantsForDay(session.programDayId!);
+    final queue = _buildQueue(planned, overrides, variants);
     final loggedSets = await _workoutDao.setsForSession(session.id);
     final cursor = cursorAfter(queue, loggedSets);
     final resumed = ActiveSession(
@@ -210,12 +243,16 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       if (planned.isEmpty) {
         throw StateError('This day has no exercises.');
       }
+      final variants = await _programDao.listVariantsForDay(programDayId);
       final session = await _workoutDao.startSession(programDayId);
       final created = ActiveSession(
         sessionId: session.id,
         programDayId: programDayId,
         startedAt: session.startedAt,
-        queue: planned.map(PlannedExercise.fromView).toList(),
+        queue: [
+          for (final v in planned)
+            PlannedExercise.fromView(v, variants: variants[v.pe.id] ?? const []),
+        ],
         cursor: const Cursor(exerciseIdx: 0, setIdx: 0),
         loggedSets: const [],
       );
@@ -680,13 +717,14 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   List<PlannedExercise> _applyOverrides(
     List<ProgramExerciseView> planned,
     List<SessionExerciseOverride> overrides,
+    Map<String, List<ProgramExerciseVariantView>> variants,
   ) {
-    if (overrides.isEmpty) {
-      return planned.map(PlannedExercise.fromView).toList();
-    }
     final byPeId = {for (final o in overrides) o.programExerciseId: o};
     return planned.map((v) {
-      final base = PlannedExercise.fromView(v);
+      final base = PlannedExercise.fromView(
+        v,
+        variants: variants[v.pe.id] ?? const [],
+      );
       final o = byPeId[v.pe.id];
       if (o == null) return base;
       return base.copyWith(
@@ -714,8 +752,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   List<PlannedExercise> _buildQueue(
     List<ProgramExerciseView> planned,
     List<SessionExerciseOverride> overrides,
+    Map<String, List<ProgramExerciseVariantView>> variants,
   ) {
-    final slots = _applyOverrides(planned, overrides);
+    final slots = _applyOverrides(planned, overrides, variants);
     for (final o in overrides) {
       if (!o.inserted) continue;
       slots.add(PlannedExercise(
@@ -806,6 +845,97 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     _pushLiveActivity(next);
   }
 
+  /// Switch a slot to one of its members — the base or a variant (SOW-14).
+  /// One tap from the exercise-options menu, no confirm. The variant's own
+  /// weight and step apply (step falls back to the slot's); sets, reps and
+  /// drops stay the slot's, and the remaining set count carries over
+  /// ([carryOverTargetSets]). Persisted as a session override like a swap, with
+  /// `previous_exercise_id` rotated so the "PREVIOUSLY N SETS ON X" banner
+  /// works. Going back to the base with the plan's numbers restored drops the
+  /// override entirely, so the tune button returns to neutral. The cursor stays
+  /// put; logged sets keep their own exercise.
+  Future<void> switchVariant(int queueIdx, String exerciseId) async {
+    final current = state.value;
+    if (current == null) return;
+    if (queueIdx < 0 || queueIdx >= current.queue.length) return;
+    final slot = current.queue[queueIdx];
+    if (!slot.hasVariants || slot.skipped || exerciseId == slot.exerciseId) {
+      return;
+    }
+    SlotVariant? member;
+    for (final m in slot.members) {
+      if (m.exerciseId == exerciseId) member = m;
+    }
+    if (member == null) return;
+
+    final target = carryOverTargetSets(slot, exerciseId, current.loggedSets);
+    final step = member.weightStepKg ?? slot.baseWeightStepKg;
+
+    if (member.isBase) {
+      final planned =
+          await _programDao.listProgramExercises(current.programDayId);
+      ProgramExerciseView? plan;
+      for (final v in planned) {
+        if (v.pe.id == slot.programExerciseId) plan = v;
+      }
+      if (plan != null &&
+          target == plan.pe.targetSets &&
+          slot.targetRepsMin == plan.pe.targetRepsMin &&
+          slot.targetRepsMax == plan.pe.targetRepsMax &&
+          slot.dropCount == plan.pe.dropCount) {
+        await _workoutDao.deleteOverride(
+          sessionId: current.sessionId,
+          programExerciseId: slot.programExerciseId,
+        );
+        final restored = slot.copyWith(
+          exerciseId: plan.pe.exerciseId,
+          exerciseName: plan.exerciseName,
+          targetSets: plan.pe.targetSets,
+          defaultWeightKg: plan.pe.defaultWeightKg,
+          weightStepKg: plan.pe.weightStepKg,
+          isOverridden: false,
+          previousExerciseId: null,
+        );
+        _replaceSlot(current, queueIdx, restored);
+        return;
+      }
+    }
+
+    await _workoutDao.upsertOverride(
+      sessionId: current.sessionId,
+      programExerciseId: slot.programExerciseId,
+      exerciseId: member.exerciseId,
+      previousExerciseId: slot.exerciseId,
+      targetSets: target,
+      targetRepsMin: slot.targetRepsMin,
+      targetRepsMax: slot.targetRepsMax,
+      defaultWeightKg: member.defaultWeightKg,
+      weightStepKg: step,
+      skipped: false,
+      dropCount: slot.dropCount,
+    );
+    _replaceSlot(
+      current,
+      queueIdx,
+      slot.copyWith(
+        exerciseId: member.exerciseId,
+        exerciseName: member.name,
+        targetSets: target,
+        defaultWeightKg: member.defaultWeightKg,
+        weightStepKg: step,
+        isOverridden: true,
+        previousExerciseId: slot.exerciseId,
+      ),
+    );
+  }
+
+  void _replaceSlot(ActiveSession current, int idx, PlannedExercise slot) {
+    final newQueue = [...current.queue]..[idx] = slot;
+    final next = current.copyWith(queue: newQueue);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
+  }
+
   /// Remove the session override on a slot and restore the planned exercise.
   /// Logged sets under the substitute are left in the database — they
   /// remain visible in the summary and contribute to that substitute
@@ -833,7 +963,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       orElse: () => throw StateError(
           'Cannot revert: program exercise no longer exists.'),
     );
-    final restored = PlannedExercise.fromView(original);
+    final restored = PlannedExercise.fromView(
+      original,
+      variants: await _programDao.listVariants(original.pe.id),
+    );
     final newQueue = [...current.queue]..[queueIdx] = restored;
     final next = current.copyWith(queue: newQueue);
     state = AsyncValue.data(next);
