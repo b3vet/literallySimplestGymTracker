@@ -119,6 +119,100 @@ class ProgramDao {
     });
   }
 
+  // ---------- Copy (SOW-13) ----------
+
+  /// Deep-copy a program: the program row, every day and every slot, each
+  /// under a fresh id, positions kept. The copy points at the SAME `exercises`
+  /// rows (the shared library), so PRs, Stats and last-set prefill carry over;
+  /// sessions, sets and session overrides are never copied. One transaction:
+  /// a failure leaves no half-copied program behind.
+  Future<Program> duplicateProgram(
+    String programId, {
+    required String name,
+  }) async {
+    return _db.transaction((txn) async {
+      final copy = Program(
+        id: _uuid.v4(),
+        name: name.trim(),
+        createdAt: DateTime.now(),
+      );
+      await txn.insert('programs', copy.toRow());
+      final days = await txn.query(
+        'program_days',
+        where: 'program_id = ?',
+        whereArgs: [programId],
+        orderBy: 'position ASC',
+      );
+      for (final d in days) {
+        final day = ProgramDay.fromRow(d);
+        final newDayId = _uuid.v4();
+        await txn.insert(
+          'program_days',
+          ProgramDay(
+            id: newDayId,
+            programId: copy.id,
+            name: day.name,
+            position: day.position,
+          ).toRow(),
+        );
+        await _copySlots(txn, fromDayId: day.id, toDayId: newDayId);
+      }
+      return copy;
+    });
+  }
+
+  /// Copy one day (with its slots) into the same program, appended last.
+  Future<ProgramDay> duplicateDay(String dayId, {required String name}) async {
+    return _db.transaction((txn) async {
+      final rows = await txn.query(
+        'program_days',
+        where: 'id = ?',
+        whereArgs: [dayId],
+        limit: 1,
+      );
+      if (rows.isEmpty) throw StateError('Day $dayId not found.');
+      final source = ProgramDay.fromRow(rows.first);
+      // MAX + 1, not COUNT: deleting a day leaves a gap in the positions, so a
+      // count could collide with the last day.
+      final maxPos = Sqflite.firstIntValue(await txn.rawQuery(
+            'SELECT MAX(position) FROM program_days WHERE program_id = ?',
+            [source.programId],
+          )) ??
+          -1;
+      final copy = ProgramDay(
+        id: _uuid.v4(),
+        programId: source.programId,
+        name: name.trim(),
+        position: maxPos + 1,
+      );
+      await txn.insert('program_days', copy.toRow());
+      await _copySlots(txn, fromDayId: source.id, toDayId: copy.id);
+      return copy;
+    });
+  }
+
+  /// Copy every slot of [fromDayId] into [toDayId] under new ids. Copies the
+  /// raw row (all columns but the ids), so a column added by a later migration
+  /// is carried along without touching this code.
+  Future<void> _copySlots(
+    Transaction txn, {
+    required String fromDayId,
+    required String toDayId,
+  }) async {
+    final slots = await txn.query(
+      'program_exercises',
+      where: 'program_day_id = ?',
+      whereArgs: [fromDayId],
+      orderBy: 'position ASC',
+    );
+    for (final slot in slots) {
+      final row = Map<String, Object?>.of(slot)
+        ..['id'] = _uuid.v4()
+        ..['program_day_id'] = toDayId;
+      await txn.insert('program_exercises', row);
+    }
+  }
+
   Future<void> reorderDays(String programId, List<String> dayIdsInOrder) async {
     final batch = _db.batch();
     for (var i = 0; i < dayIdsInOrder.length; i++) {
