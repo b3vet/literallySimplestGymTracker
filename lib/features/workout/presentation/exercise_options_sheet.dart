@@ -63,13 +63,13 @@ class _ExerciseOptionsSheet extends StatelessWidget {
   final bool canAddSet;
   final bool canRemoveSet;
 
-  /// False once the slot's sets are all logged, or once the sets done meet
-  /// every other member's own plan: there is nothing left to switch to
-  /// (SOW-14, review #2; DEC-0007 #13).
+  /// False once the sets done meet every other member's own plan: there is
+  /// nothing left to switch to (SOW-14 §3 #6, the per-member rule; review
+  /// #2). The running member being complete alone doesn't disable it.
   final bool canSwitchVariant;
 
-  /// Which of the two disabled cases it is: the running member's sets are all
-  /// logged (true), or only the other members' plans are met.
+  /// When disabled, whether the running member's own sets are all logged too
+  /// (every plan met) — only the wording differs.
   final bool slotDone;
 
   @override
@@ -108,7 +108,7 @@ class _ExerciseOptionsSheet extends StatelessWidget {
             subtitle: canSwitchVariant
                 ? 'Now: ${exercise.exerciseName}'
                 : slotDone
-                ? 'All sets done on ${exercise.exerciseName}'
+                ? 'All sets done · no variant has sets left'
                 : 'No other variant has sets left',
             // Wraps instead of losing the name (QA VAR-14).
             subtitleMaxLines: 3,

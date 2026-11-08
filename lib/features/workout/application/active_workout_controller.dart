@@ -950,14 +950,15 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     if (!slot.hasVariants || slot.skipped || exerciseId == slot.exerciseId) {
       return;
     }
-    // A complete slot has nothing left to carry over (review #2).
-    if (slot.isCompleteIn(current.loggedSets)) return;
     SlotVariant? member;
     for (final m in slot.members) {
       if (m.exerciseId == exerciseId) member = m;
     }
     if (member == null) return;
-    // Nor does one that is already complete under the member's own plan.
+    // The per-member rule (SOW-14 §3 #6): refused only when the slot is
+    // already complete under the member's OWN plan — a switch there would
+    // leave nothing to do (review #2: no inflation). Whether the running
+    // member is complete doesn't matter.
     if (!slot.canSwitchTo(member, current.loggedSets)) return;
 
     final plan = slot.prescriptionOf(member);

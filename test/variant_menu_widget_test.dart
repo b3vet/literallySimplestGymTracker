@@ -201,9 +201,11 @@ void main() {
     expect(fake.calls, isEmpty);
   });
 
-  // Review #2: on a slot whose sets are all logged, the switch is shown but
-  // disabled — there is nothing left to carry over.
-  testWidgets('disabled once the slot is complete', (tester) async {
+  // Review #2: on a slot complete under every member's plan, the switch is
+  // shown but disabled — there is nothing left to carry over.
+  testWidgets('disabled once the slot is complete under every plan', (
+    tester,
+  ) async {
     await pump(
       tester,
       _slot(),
@@ -222,7 +224,10 @@ void main() {
       ],
     );
     expect(find.text('SWITCH VARIANT'), findsOneWidget);
-    expect(find.text('ALL SETS DONE ON SHOULDER PRESS'), findsOneWidget);
+    expect(
+      find.text('ALL SETS DONE · NO VARIANT HAS SETS LEFT'),
+      findsOneWidget,
+    );
     await tester.tap(find.text('SWITCH VARIANT'));
     await tester.pumpAndSettle();
     expect(find.text('SETS DONE COUNT TOWARD EACH PLAN'), findsNothing);
@@ -345,8 +350,65 @@ void main() {
     expect(find.text('SWITCH VARIANT'), findsOneWidget, reason: 'no picker');
   });
 
+  // SOW-14 §3 #6, the per-member rule (dispatcher, D-0016 review #3): base
+  // 2 sets, variant 4, 2 done on the base — the base is complete, but the
+  // variant still has 2 under its own plan, so the switch is offered.
+  testWidgets('a complete base still switches to a variant with sets left', (
+    tester,
+  ) async {
+    const big = SlotVariant(
+      variantId: 'v5',
+      exerciseId: 'smith',
+      name: 'Shoulder Press (Smith)',
+      defaultWeightKg: 50,
+      targetSets: 4,
+    );
+    final slot = _slot(variants: const [big, _db]);
+    await pump(
+      tester,
+      PlannedExercise(
+        programExerciseId: slot.programExerciseId,
+        exerciseId: 'bar',
+        exerciseName: 'Shoulder Press',
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 10,
+        defaultWeightKg: 60,
+        baseExerciseId: 'bar',
+        baseExerciseName: 'Shoulder Press',
+        baseDefaultWeightKg: 60,
+        baseTargetSets: 2,
+        variants: slot.variants,
+      ),
+      logged: [
+        for (var i = 0; i < 2; i++)
+          WorkoutSet(
+            id: 's$i',
+            sessionId: 's',
+            exerciseId: 'bar',
+            setIndex: i,
+            reps: 8,
+            weightKg: 60,
+            rir: 1,
+            loggedAt: DateTime(2026),
+          ),
+      ],
+    );
+    expect(find.text('NOW: SHOULDER PRESS'), findsOneWidget);
+    await tester.tap(find.text('SWITCH VARIANT'));
+    await tester.pumpAndSettle();
+    expect(
+      find.text('2×8-10 · 22.5 KG · PLAN ALREADY MET'),
+      findsOneWidget,
+      reason: 'the DB inherits the base\'s 2',
+    );
+    await tester.tap(find.byKey(const ValueKey('variant-row-smith')));
+    await tester.pumpAndSettle();
+    expect(fake.calls, [(0, 'smith')]);
+  });
+
   // QA VAR-14 observation: the dimmed row's subtitle was ellipsized.
-  testWidgets('ALL SETS DONE ON <BASE> wraps instead of truncating', (
+  testWidgets('the dimmed subtitle wraps instead of truncating', (
     tester,
   ) async {
     await pump(
@@ -367,7 +429,7 @@ void main() {
       ],
     );
     final p = tester.renderObject<RenderParagraph>(
-      find.text('ALL SETS DONE ON SHOULDER PRESS'),
+      find.text('ALL SETS DONE · NO VARIANT HAS SETS LEFT'),
     );
     expect(p.didExceedMaxLines, isFalse);
   });

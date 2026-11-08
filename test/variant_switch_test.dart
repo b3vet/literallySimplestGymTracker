@@ -275,6 +275,27 @@ void main() {
         );
       });
 
+      // SOW-14 §3 #6, the per-member rule (D-0016 review #3): a complete
+      // running member doesn't block a member with sets left under its plan.
+      test('base 2, variant 4, 2 done on the base: the switch is allowed', () {
+        final s = slot(on: 'bar', target: 2, base: 2, machineSets: 4);
+        final done = sets({'bar': 2});
+        expect(s.isCompleteIn(done), isTrue);
+        final m = s.members.firstWhere((m) => m.exerciseId == 'machine');
+        expect(s.canSwitchTo(m, done), isTrue);
+        expect(s.canSwitchVariant(done), isTrue);
+        expect(carryOverTargetSets(s, 'machine', done), 2, reason: '4 − 2');
+        expect(
+          s.canSwitchTo(s.members.last, done),
+          isFalse,
+          reason: 'the DB inherits 2: met',
+        );
+        // On the variant, the base stays refused: no inflation.
+        final on = slot(on: 'machine', target: 2, base: 2, machineSets: 4);
+        expect(on.canSwitchTo(on.members.first, done), isFalse);
+        expect(carryOverTargetSets(on, 'bar', done), 2, reason: 'no drift');
+      });
+
       test('round trips never drift', () {
         final done = sets({'bar': 1, 'machine': 1});
         var s = slot(on: 'bar', target: 3, machineSets: 4);
@@ -1004,6 +1025,37 @@ void main() {
         await WorkoutDao(db).overridesForSession(session(c).sessionId),
         isEmpty,
       );
+    });
+
+    // SOW-14 §3 #6, the per-member rule (D-0016 review #3).
+    test('a complete base switches to a bigger variant; no inflation, no '
+        'drift, and a resume agrees', () async {
+      final c = await container();
+      final ctrl = c.read(activeSessionProvider.notifier);
+      await ctrl.start(dayId);
+      for (var i = 0; i < 3; i++) {
+        await logBar(c);
+      }
+      expect(session(c).cursor.exerciseIdx, 1, reason: 'bar 3 of 3');
+      await ctrl.goToExerciseIndex(0);
+      await ctrl.switchVariant(0, smithId);
+      var slot = session(c).queue.first;
+      expect(slot.exerciseId, smithId, reason: 'allowed: smith plans 4');
+      expect(slot.targetSets, 1, reason: 'smith 4 − 3 on the bar');
+
+      // Back to the bar or on to the cable: both plans are met — refused.
+      final before = session(c);
+      await ctrl.switchVariant(0, barId);
+      await ctrl.switchVariant(0, cableId);
+      expect(identical(session(c), before), isTrue);
+      expect(slot.canSwitchVariant(before.loggedSets), isFalse);
+
+      await logDropSet(c);
+      expect(session(c).cursor.exerciseIdx, 1, reason: '3 bar + 1 smith');
+      final resumed = session(await container());
+      slot = resumed.queue.first;
+      expect([slot.exerciseId, slot.targetSets], [smithId, 1]);
+      expect(resumed.cursor.exerciseIdx, 1);
     });
 
     test('a smaller variant plan: on the cable 2 after 1 on the bar, and a '

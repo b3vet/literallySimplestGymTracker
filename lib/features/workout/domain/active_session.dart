@@ -265,10 +265,12 @@ class PlannedExercise {
       m.exerciseId != exerciseId &&
       slotDoneSets(logged) < prescriptionOf(m).sets;
 
-  /// Whether the "Switch variant" entry is live: the running member still has
-  /// sets to do and at least one other member has some under its plan.
+  /// Whether the "Switch variant" entry is live: at least one OTHER member
+  /// still has sets left under its own plan (SOW-14 §3 #6, the per-member
+  /// rule). The running member being complete doesn't block it: base 2 sets,
+  /// variant 4, 2 done on the base → the variant still has 2.
   bool canSwitchVariant(List<WorkoutSet> logged) =>
-      !isCompleteIn(logged) && members.any((m) => canSwitchTo(m, logged));
+      members.any((m) => canSwitchTo(m, logged));
 
   /// The weight [m] runs with in this session: the slot's current weight for
   /// the active member, a remembered one for a member switched away from, else
