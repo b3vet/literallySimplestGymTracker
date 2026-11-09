@@ -14,6 +14,7 @@ import '../application/programs_provider.dart';
 import '../domain/program_exercise.dart';
 import '../domain/program_exercise_variant.dart';
 import 'exercise_edit_sheet.dart';
+import 'program_delete.dart';
 import 'variants_sheet.dart';
 
 class DayEditorScreen extends ConsumerStatefulWidget {
@@ -62,30 +63,22 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
         leftLabel: _editing ? 'DONE' : 'EDIT',
         leftIcon: _editing ? Icons.check : Icons.edit_outlined,
         rightLabel: '+ EXERCISE',
-        onLeft: () async {
-          if (_editing) {
-            setState(() => _editing = false);
-            return;
-          }
-          final d = day.value;
-          if (d == null) return;
-          final name = await promptName(
-            context,
-            title: 'RENAME DAY',
-            initial: d.name,
-          );
-          if (name == null || name.isEmpty) return;
-          await ref.read(programDaoProvider).renameDay(d.id, name);
-          ref.invalidate(dayProvider(widget.dayId));
-          ref.invalidate(programDaysProvider(widget.programId));
-        },
+        // EDIT mode (SOW-15): delete buttons on the exercise rows, DELETE
+        // DAY, and the rename that EDIT used to open directly.
+        onLeft: () => setState(() => _editing = !_editing),
         onRight: () => _addExercise(context),
       ),
       child: exercises.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (list) => list.isEmpty
-            ? _EmptyExercises(text2: t.surface.text2)
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _EmptyExercises(text2: t.surface.text2)),
+                  if (_editing) _editFooter(context, dayName),
+                ],
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -103,6 +96,8 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
                       padding: EdgeInsets.zero,
                       buildDefaultDragHandles: false,
                       itemCount: list.length,
+                      footer:
+                          _editing ? _editFooter(context, dayName) : null,
                       proxyDecorator: (child, _, _) =>
                           Material(color: Colors.transparent, child: child),
                       onReorder: (oldIdx, newIdx) async {
@@ -128,13 +123,6 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
                             view: v,
                             editing: _editing,
                             onTap: () => _editExercise(context, v),
-                            onDelete: () async {
-                              await ref
-                                  .read(programDaoProvider)
-                                  .deleteProgramExercise(v.pe.id);
-                              ref.invalidate(
-                                  dayExercisesProvider(widget.dayId));
-                            },
                           ),
                         );
                       },
@@ -143,6 +131,65 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
                 ],
               ),
       ),
+    );
+  }
+
+  /// EDIT mode, after the last exercise: rename the day, or delete it.
+  Widget _editFooter(BuildContext context, String dayName) => Padding(
+        padding: const EdgeInsets.only(top: LsGap.sub, bottom: LsGap.sub),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            LsButton(
+              label: 'RENAME DAY',
+              icon: Icons.edit_outlined,
+              variant: LsButtonVariant.ghost,
+              expand: true,
+              onPressed: () => _rename(context),
+            ),
+            const SizedBox(height: LsGap.tight),
+            LsButton(
+              label: 'DELETE DAY',
+              icon: Icons.delete_outline,
+              variant: LsButtonVariant.danger,
+              expand: true,
+              onPressed: () => _deleteDay(context, dayName),
+            ),
+          ],
+        ),
+      );
+
+  Future<void> _rename(BuildContext context) async {
+    final d = ref.read(dayProvider(widget.dayId)).value;
+    if (d == null) return;
+    final name = await promptName(
+      context,
+      title: 'RENAME DAY',
+      initial: d.name,
+    );
+    if (name == null || name.isEmpty) return;
+    await ref.read(programDaoProvider).renameDay(d.id, name);
+    ref.invalidate(dayProvider(widget.dayId));
+    ref.invalidate(programDaysProvider(widget.programId));
+  }
+
+  /// SOW-15: same confirm as the program editor's day row (with the
+  /// workout-in-progress warning), then back to the program editor.
+  Future<void> _deleteDay(BuildContext context, String dayName) async {
+    final router = GoRouter.of(context);
+    await deleteDayFlow(
+      context,
+      ref,
+      programId: widget.programId,
+      dayId: widget.dayId,
+      label: dayName,
+      onConfirmed: () {
+        if (router.canPop()) {
+          router.pop();
+        } else {
+          router.go('/programs/${widget.programId}');
+        }
+      },
     );
   }
 
@@ -235,7 +282,17 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
     );
     if (result == null) return;
     if (result.delete) {
-      await ref.read(programDaoProvider).deleteProgramExercise(v.pe.id);
+      // SOW-15: the same guarded confirm → delete as the row's button and the
+      // swipe (variants, History, and the workout in progress).
+      if (!context.mounted) return;
+      await deleteExerciseFlow(
+        context,
+        ref,
+        programExerciseId: v.pe.id,
+        dayId: widget.dayId,
+        label: v.exerciseName,
+      );
+      return;
     } else {
       final ex = await ref
           .read(programDaoProvider)
@@ -282,13 +339,11 @@ class _ExerciseTile extends ConsumerWidget {
     required this.view,
     required this.editing,
     required this.onTap,
-    required this.onDelete,
   });
   final int index;
   final ProgramExerciseView view;
   final bool editing;
   final VoidCallback onTap;
-  final Future<void> Function() onDelete;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -347,19 +402,40 @@ class _ExerciseTile extends ConsumerWidget {
               ],
             ),
           ),
-          if (!editing)
+          if (editing)
+            DeleteRowButton(
+              name: view.exerciseName,
+              onPressed: () => deleteExerciseFlow(
+                context,
+                ref,
+                programExerciseId: pe.id,
+                dayId: pe.programDayId,
+                label: view.exerciseName,
+              ),
+            )
+          else
             Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
         ],
       ),
     );
 
+    // The swipe, the row's delete button and the edit sheet's DELETE all run
+    // the same confirm → delete (program_delete.dart).
     return Dismissible(
       key: ValueKey('dismiss-${pe.id}'),
       direction: editing ? DismissDirection.endToStart : DismissDirection.none,
       background: dismissBackground(),
-      confirmDismiss: (_) async =>
-          await confirmDelete(context, view.exerciseName) ?? false,
-      onDismissed: (_) async => onDelete(),
+      confirmDismiss: (_) => confirmExerciseDelete(
+        context,
+        ref,
+        label: view.exerciseName,
+        programExerciseId: pe.id,
+      ),
+      onDismissed: (_) => deleteExerciseConfirmed(
+        ProviderScope.containerOf(context, listen: false),
+        programExerciseId: pe.id,
+        dayId: pe.programDayId,
+      ),
       child: card,
     );
   }

@@ -159,3 +159,41 @@ Widget dismissBackground() => Builder(
         child: const Icon(Icons.delete_outline, color: Colors.white),
       ),
     );
+
+/// SOW-15: the visible delete control on an editable row (EDIT mode), next to
+/// the swipe. Red, 44 × 44 tap target, read out as `Delete <name>`.
+class DeleteRowButton extends StatelessWidget {
+  const DeleteRowButton({
+    super.key,
+    required this.name,
+    required this.onPressed,
+  });
+  final String name;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Delete $name',
+      excludeSemantics: true,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(LsRadius.r3),
+          onTap: onPressed,
+          child: const SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(
+              Icons.remove_circle_outline,
+              color: LsSignals.danger,
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
