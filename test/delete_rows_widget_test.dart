@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -193,6 +194,24 @@ void main() {
       final days = await tester.runAsync(() => dao.listDays(programId));
       expect(days!.map((d) => d.name), ['Pull']);
       expect(find.text('PUSH'), findsNothing);
+      await closeDb(tester);
+    });
+
+    // D-0017 review #3: excludeSemantics dropped the InkWell's tap action,
+    // so VoiceOver read "Delete Push, button" but could not activate it.
+    testWidgets('the delete button exposes a semantic tap action', (
+      tester,
+    ) async {
+      await seed(tester);
+      await pumpAt(tester, '/programs/$programId');
+      await tapEdit(tester);
+      final node = tester.getSemantics(find.bySemanticsLabel('Delete Push'));
+      expect(node.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+      node.owner!.performAction(node.id, SemanticsAction.tap);
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsOneWidget);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
       await closeDb(tester);
     });
 

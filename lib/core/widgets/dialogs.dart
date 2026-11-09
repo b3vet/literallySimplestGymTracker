@@ -161,7 +161,9 @@ Widget dismissBackground() => Builder(
     );
 
 /// SOW-15: the visible delete control on an editable row (EDIT mode), next to
-/// the swipe. Red, 44 × 44 tap target, read out as `Delete <name>`.
+/// the swipe. Red, 44 × 44 tap target, read out as `Delete <name>` with a tap
+/// action (the `Semantics` excludes the InkWell's own node, so it re-declares
+/// `onTap` — D-0017 review #3).
 class DeleteRowButton extends StatelessWidget {
   const DeleteRowButton({
     super.key,
@@ -178,6 +180,7 @@ class DeleteRowButton extends StatelessWidget {
       button: true,
       label: 'Delete $name',
       excludeSemantics: true,
+      onTap: onPressed,
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
