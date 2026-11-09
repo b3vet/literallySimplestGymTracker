@@ -227,16 +227,19 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     }
 
     final planned = await _programDao.listProgramExercises(session.programDayId!);
-    if (planned.isEmpty) {
-      // Nothing to do — abandon.
-      await _workoutDao.abandonSession(session.id);
-      return null;
-    }
     final overrides = await _workoutDao.overridesForSession(session.id);
     final variants =
         await _programDao.listVariantsForDay(session.programDayId!);
     final queue = _buildQueue(planned, overrides, variants);
     final loggedSets = await _workoutDao.setsForSession(session.id);
+    if (queue.isEmpty && loggedSets.isEmpty) {
+      // Nothing to do and nothing logged — abandon. With sets logged the
+      // workout stays open on an empty queue (ALL DONE → FINISH): the day's
+      // last exercise was deleted mid-workout (SOW-15). Abandoning it here
+      // used to drop those sets out of History, PRs and Stats.
+      await _workoutDao.abandonSession(session.id);
+      return null;
+    }
     final cursor = cursorAfter(queue, loggedSets);
     final resumed = ActiveSession(
       sessionId: session.id,
@@ -299,6 +302,65 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     }
     state = const AsyncValue.data(null);
     await _closeDetached(session.id);
+    return true;
+  }
+
+  /// After a slot was deleted from the program (SOW-15): drop every template
+  /// slot of the running workout whose program row is gone. Inserted
+  /// exercises have no program row and stay. Logged sets are kept — they are
+  /// keyed by exercise, not by slot. The slot's override row was marked
+  /// dropped by [ProgramDao.deleteProgramExercise] and is ignored from here
+  /// on, since the queue is built from the plan.
+  ///
+  /// Cursor: a kept current slot stays current. If the current slot was
+  /// dropped, the cursor moves to the next remaining slot that isn't skipped;
+  /// with none after it, to the first slot with sets left ([cursorAfter]) —
+  /// or the finished state, where the workout stays open and FINISH still
+  /// works. The Live Activity is updated here and the watch snapshot follows
+  /// the state change, so neither keeps showing the dropped slot. Returns
+  /// whether anything was dropped.
+  Future<bool> dropDeletedSlots() async {
+    final current = state.value;
+    if (current == null) return false;
+    final planned =
+        await _programDao.listProgramExercises(current.programDayId);
+    final live = {for (final v in planned) v.pe.id};
+    // Re-read: the state may have moved while the plan was loading.
+    final now = state.value;
+    if (now == null || now.sessionId != current.sessionId) return false;
+    final oldIdx = now.cursor.exerciseIdx;
+    final kept = <PlannedExercise>[];
+    var keptCurrent = -1;
+    var keptBefore = 0;
+    for (var i = 0; i < now.queue.length; i++) {
+      final slot = now.queue[i];
+      if (!slot.isInserted && !live.contains(slot.programExerciseId)) continue;
+      if (i == oldIdx) keptCurrent = kept.length;
+      if (i < oldIdx) keptBefore++;
+      kept.add(slot);
+    }
+    if (kept.length == now.queue.length) return false;
+
+    final Cursor cursor;
+    if (keptCurrent >= 0) {
+      cursor = now.cursor.copyWith(exerciseIdx: keptCurrent);
+    } else if (oldIdx >= now.queue.length) {
+      cursor = Cursor(exerciseIdx: kept.length, setIdx: 0);
+    } else {
+      var idx = keptBefore;
+      while (idx < kept.length && kept[idx].skipped) {
+        idx++;
+      }
+      cursor = idx < kept.length
+          ? Cursor(
+              exerciseIdx: idx,
+              setIdx: completedSetsFor(now.loggedSets, kept[idx].exerciseId),
+            )
+          : cursorAfter(kept, now.loggedSets);
+    }
+    final next = now.copyWith(queue: kept, cursor: cursor);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
     return true;
   }
 

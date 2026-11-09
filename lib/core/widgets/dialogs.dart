@@ -87,11 +87,13 @@ Future<String?> promptName(
   );
 }
 
-/// [warning], when given, is an extra paragraph under the standard line —
-/// e.g. that the workout in progress will end.
+/// [details] are extra lines under the standard one that spell out what goes
+/// with it (SOW-15: "2 exercises will be removed."). [warning], when given, is
+/// a red paragraph after them — e.g. that the workout in progress will end.
 Future<bool?> confirmDelete(
   BuildContext context,
   String label, {
+  List<String> details = const [],
   String? warning,
 }) =>
     showDialog(
@@ -108,6 +110,13 @@ Future<bool?> confirmDelete(
                 'This will delete "$label" and everything inside it.',
                 style: LsType.bodyM.copyWith(color: t.surface.text2),
               ),
+              for (final line in details) ...[
+                const SizedBox(height: 8),
+                Text(
+                  line,
+                  style: LsType.bodyM.copyWith(color: t.surface.text2),
+                ),
+              ],
               if (warning != null) ...[
                 const SizedBox(height: 12),
                 Text(

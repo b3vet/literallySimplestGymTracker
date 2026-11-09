@@ -443,8 +443,67 @@ class ProgramDao {
     return rows.isEmpty ? null : ProgramExercise.fromRow(rows.first);
   }
 
+  /// Delete a slot; its variants cascade. Sets already logged stay (they are
+  /// keyed by exercise, not by slot), so History, PRs and Stats are untouched.
+  ///
+  /// SOW-15: when a workout in progress runs on the slot's day, the slot's
+  /// session override is kept as a *dropped* marker (`skipped = 1`; written
+  /// when the slot had none) in the same transaction. The workout's queue
+  /// ignores it — the queue is built from the plan, and the slot is gone — but
+  /// the summary reads it so it does not offer ADD TO DAY for the exercise
+  /// just deleted from the day. No schema change: `program_exercise_id` has
+  /// no foreign key.
   Future<void> deleteProgramExercise(String id) async {
-    await _db.delete('program_exercises', where: 'id = ?', whereArgs: [id]);
+    await _db.transaction((txn) async {
+      final slot = await txn.query('program_exercises',
+          where: 'id = ?', whereArgs: [id], limit: 1);
+      if (slot.isNotEmpty) {
+        final pe = ProgramExercise.fromRow(slot.first);
+        final active = await txn.query('workout_sessions',
+            columns: ['id'],
+            where: "program_day_id = ? AND status = 'active'",
+            whereArgs: [pe.programDayId]);
+        for (final s in active) {
+          final marked = await txn.update(
+            'session_exercise_overrides',
+            {'skipped': 1},
+            where: 'session_id = ? AND program_exercise_id = ?',
+            whereArgs: [s['id'], id],
+          );
+          if (marked > 0) continue;
+          await txn.insert('session_exercise_overrides', {
+            'id': _uuid.v4(),
+            'session_id': s['id'],
+            'program_exercise_id': id,
+            'exercise_id': pe.exerciseId,
+            'target_sets': pe.targetSets,
+            'target_reps_min': pe.targetRepsMin,
+            'target_reps_max': pe.targetRepsMax,
+            'default_weight': pe.defaultWeightKg,
+            'weight_step': pe.weightStepKg,
+            'skipped': 1,
+            'inserted': 0,
+            'drop_count': pe.dropCount,
+          });
+        }
+      }
+      await txn.delete('program_exercises', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  /// Whether the in-progress workout runs on the day that holds slot [id] —
+  /// the exercise delete confirmation then warns that the workout drops it.
+  Future<bool> hasActiveWorkoutOnSlot(String id) async {
+    final rows = await _db.rawQuery(
+      '''
+      SELECT 1 FROM workout_sessions ws
+      JOIN program_exercises pe ON pe.program_day_id = ws.program_day_id
+      WHERE ws.status = 'active' AND pe.id = ?
+      LIMIT 1
+      ''',
+      [id],
+    );
+    return rows.isNotEmpty;
   }
 
   Future<void> reorderProgramExercises(

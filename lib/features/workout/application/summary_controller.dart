@@ -68,6 +68,7 @@ class ExerciseSummary {
     this.substituteSlotName,
     this.substituteOverride,
     this.isFirstExposure = false,
+    this.droppedFromDay = false,
   });
 
   final String exerciseId;
@@ -114,6 +115,12 @@ class ExerciseSummary {
   /// which has its own baseline treatment). [pr] is null; the card reads
   /// FIRST TIME instead of a guaranteed, meaningless weight PR.
   final bool isFirstExposure;
+
+  /// SOW-15: the exercise ran on a slot that was deleted from the day while
+  /// this workout was in progress, and is not in the plan otherwise. Its sets
+  /// stay (NOT IN PLAN), but the summary doesn't offer ADD TO DAY for what the
+  /// lifter just removed.
+  final bool droppedFromDay;
 
   int get setCount => setGroups.length;
 
@@ -243,12 +250,14 @@ final sessionSummaryProvider =
     variantsBySlot =
         await programDao.listVariantsForDay(session.programDayId!);
   }
+  final overrides = await dao.overridesForSession(sessionId);
   final attribution = attributeToSlots(
     exerciseIds: orderedIds,
     slots: slots,
     variantsBySlot: variantsBySlot,
-    overrides: await dao.overridesForSession(sessionId),
+    overrides: overrides,
   );
+  final dropped = droppedSlotExerciseIds(slots: slots, overrides: overrides);
 
   // Previous completed session on this same day — drives every "vs last"
   // comparison on the screen, plus the headline volume delta.
@@ -338,6 +347,9 @@ final sessionSummaryProvider =
       substituteOverride: attribution[id]?.variant == null
           ? attribution[id]?.override
           : null,
+      droppedFromDay: dropped.contains(id) &&
+          planByExercise[id] == null &&
+          attribution[id] == null,
     ));
   }
 
@@ -354,6 +366,30 @@ final sessionSummaryProvider =
     isFirstEverSession: isFirstEver,
   );
 });
+
+/// SOW-15: the exercises a slot deleted from the day mid-workout ran this
+/// session — read off its override row, which the delete keeps as a dropped
+/// marker (a non-inserted row whose slot is no longer on the day). An
+/// exercise that was also inserted this session is left out: that one was
+/// "added", and ADD TO DAY still applies. Pure for tests.
+Set<String> droppedSlotExerciseIds({
+  required List<ProgramExerciseView> slots,
+  required List<SessionExerciseOverride> overrides,
+}) {
+  final slotIds = {for (final s in slots) s.pe.id};
+  List<String> ran(SessionExerciseOverride o) =>
+      [o.exerciseId, ?o.previousExerciseId, ...o.ranExerciseIds];
+  final inserted = {
+    for (final o in overrides)
+      if (o.inserted) ...ran(o),
+  };
+  return {
+    for (final o in overrides)
+      if (!o.inserted && !slotIds.contains(o.programExerciseId))
+        for (final id in ran(o))
+          if (!inserted.contains(id)) id,
+  };
+}
 
 /// Where a logged exercise that is NOT a slot's base belongs (SOW-14).
 class SlotAttribution {
@@ -684,6 +720,9 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
         continue;
       }
       if (pe == null) {
+        // SOW-15: deleted from the day during this workout — don't offer to
+        // put it back.
+        if (e.droppedFromDay) continue;
         out.add(ProgramUpdate(
           exerciseId: e.exerciseId,
           exerciseName: e.name,
