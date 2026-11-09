@@ -305,6 +305,19 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     return true;
   }
 
+  /// Whether deleting the program slot [programExerciseId] would leave the
+  /// running workout empty with nothing logged — the case in which
+  /// [dropDeletedSlots] abandons it. Read by the delete confirmation so it can
+  /// say the workout ends rather than that it carries on without the slot.
+  bool dropWouldEnd(String programExerciseId) {
+    final now = state.value;
+    if (now == null || now.queue.isEmpty || now.loggedSets.isNotEmpty) {
+      return false;
+    }
+    return now.queue.every(
+        (s) => !s.isInserted && s.programExerciseId == programExerciseId);
+  }
+
   /// After a slot was deleted from the program (SOW-15): drop every template
   /// slot of the running workout whose program row is gone. Inserted
   /// exercises have no program row and stay. Logged sets are kept — they are

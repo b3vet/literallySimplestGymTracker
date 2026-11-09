@@ -23,11 +23,21 @@ String deleteDayExercisesLine(int n) =>
 String deleteExerciseVariantsLine(int n) =>
     'Also deletes its $n ${n == 1 ? 'variant' : 'variants'}.';
 
+/// The first line of an exercise's delete confirmation: an exercise has
+/// nothing "inside it" — what goes with it is spelled out below.
+String deleteExerciseLine(String label) => 'This will delete "$label".';
+
 /// Shown when the workout in progress runs on the exercise's day: unlike a
 /// day delete, the workout keeps going without the exercise.
 const deleteDropsExerciseWarning =
     'Your workout in progress will drop this exercise; sets already logged '
     'are kept.';
+
+/// Shown instead when it is the workout's only exercise and nothing has been
+/// logged: dropping it abandons the workout
+/// ([ActiveWorkoutController.dropDeletedSlots]).
+const deleteEndsEmptyWorkoutWarning =
+    'Your workout in progress has nothing logged and will end.';
 
 /// D-0017 review #4: one delete at a time per app (provider container). The
 /// confirm reads the DB before its dialog shows, so a fast second tap — on
@@ -165,18 +175,32 @@ Future<bool> _confirmExerciseDelete(
   required String label,
   required String programExerciseId,
 }) async {
+  final container = ProviderScope.containerOf(context, listen: false);
   final dao = ref.read(programDaoProvider);
   final variants = (await dao.listVariants(programExerciseId)).length;
   final active = await dao.hasActiveWorkoutOnSlot(programExerciseId);
+  var ends = false;
+  if (active) {
+    // The workout may not be loaded yet (nothing has shown it this launch).
+    await container.read(activeSessionProvider.future);
+    ends = container
+        .read(activeSessionProvider.notifier)
+        .dropWouldEnd(programExerciseId);
+  }
   if (!context.mounted) return false;
   return await confirmDelete(
         context,
         label,
+        message: deleteExerciseLine(label),
         details: [
           if (variants > 0) deleteExerciseVariantsLine(variants),
           deleteKeepsHistoryLine,
         ],
-        warning: active ? deleteDropsExerciseWarning : null,
+        warning: !active
+            ? null
+            : ends
+                ? deleteEndsEmptyWorkoutWarning
+                : deleteDropsExerciseWarning,
       ) ??
       false;
 }

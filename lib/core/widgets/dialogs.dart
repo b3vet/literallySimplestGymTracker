@@ -92,9 +92,12 @@ Future<String?> promptName(
 /// [details] are extra lines under the standard one that spell out what goes
 /// with it (SOW-15: "2 exercises will be removed."). [warning], when given, is
 /// a red paragraph after them — e.g. that the workout in progress will end.
+/// [message] replaces the standard first line ("…and everything inside it"),
+/// for things that have nothing inside them, e.g. an exercise.
 Future<bool?> confirmDelete(
   BuildContext context,
   String label, {
+  String? message,
   List<String> details = const [],
   String? warning,
 }) =>
@@ -109,7 +112,8 @@ Future<bool?> confirmDelete(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'This will delete "$label" and everything inside it.',
+                message ??
+                    'This will delete "$label" and everything inside it.',
                 style: LsType.bodyM.copyWith(color: t.surface.text2),
               ),
               for (final line in details) ...[

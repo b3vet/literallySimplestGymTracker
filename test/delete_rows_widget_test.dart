@@ -291,6 +291,9 @@ void main() {
       await tapEdit(tester);
       await tester.tap(find.bySemanticsLabel('Delete Bench Press'));
       await settleDb(tester);
+      expect(find.text(deleteExerciseLine('Bench Press')), findsOneWidget);
+      expect(find.textContaining('everything inside'), findsNothing,
+          reason: 'an exercise has nothing inside it');
       expect(find.text('Also deletes its 2 variants.'), findsOneWidget);
       expect(find.text(deleteKeepsHistoryLine), findsOneWidget);
       expect(find.text(deleteDropsExerciseWarning), findsNothing);
@@ -315,6 +318,49 @@ void main() {
       await settleDb(tester);
       expect(find.text(deleteDropsExerciseWarning), findsOneWidget);
       expect(find.textContaining('variant'), findsNothing);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
+      await closeDb(tester);
+    });
+
+    // QA after D-0017 review #5: deleting the only exercise of a workout
+    // with nothing logged abandons it, and the dialog says so.
+    testWidgets('exercise: says an empty workout will end', (tester) async {
+      await seed(tester);
+      await tester.runAsync(() => WorkoutDao(db).startSession(pullId));
+      await pumpAt(tester, '/programs/$programId/days/$pullId');
+      await tapEdit(tester);
+      await tester.tap(find.bySemanticsLabel('Delete Row'));
+      await settleDb(tester);
+      expect(find.text(deleteEndsEmptyWorkoutWarning), findsOneWidget);
+      expect(find.text(deleteDropsExerciseWarning), findsNothing);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
+      await closeDb(tester);
+    });
+
+    testWidgets('exercise: a workout with sets logged is not said to end', (
+      tester,
+    ) async {
+      await seed(tester);
+      await tester.runAsync(() async {
+        final session = await WorkoutDao(db).startSession(pullId);
+        final row = (await dao.listProgramExercises(pullId)).single;
+        await WorkoutDao(db).insertSet(
+          sessionId: session.id,
+          exerciseId: row.pe.exerciseId,
+          setIndex: 0,
+          reps: 8,
+          weightKg: 60,
+          rir: 1,
+        );
+      });
+      await pumpAt(tester, '/programs/$programId/days/$pullId');
+      await tapEdit(tester);
+      await tester.tap(find.bySemanticsLabel('Delete Row'));
+      await settleDb(tester);
+      expect(find.text(deleteDropsExerciseWarning), findsOneWidget);
+      expect(find.text(deleteEndsEmptyWorkoutWarning), findsNothing);
       await tester.tap(find.text('CANCEL'));
       await settleDb(tester);
       await closeDb(tester);
