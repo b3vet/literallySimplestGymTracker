@@ -316,9 +316,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   /// dropped, the cursor moves to the next remaining slot that isn't skipped
   /// or complete; with none after it, to the first slot with sets left ([cursorAfter]) —
   /// or the finished state, where the workout stays open and FINISH still
-  /// works. The Live Activity is updated here and the watch snapshot follows
-  /// the state change, so neither keeps showing the dropped slot. Returns
-  /// whether anything was dropped.
+  /// works — unless nothing was logged, in which case it is abandoned, the
+  /// same rule as on resume. The Live Activity is updated here and the watch
+  /// snapshot follows the state change, so neither keeps showing the dropped
+  /// slot. Returns whether anything was dropped.
   Future<bool> dropDeletedSlots() async {
     final current = state.value;
     if (current == null) return false;
@@ -340,6 +341,15 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       kept.add(slot);
     }
     if (kept.length == now.queue.length) return false;
+    if (kept.isEmpty && now.loggedSets.isEmpty) {
+      // Nothing left and nothing logged (inserted exercises are always kept,
+      // so none was inserted either): abandon now, as a resume would, rather
+      // than let FINISH save an empty workout (D-0017 review #5). [abandon]
+      // clears the rest timer and ends the Live Activity; Home and the
+      // workout screen follow the state to null, as after a day delete.
+      await abandon();
+      return true;
+    }
 
     final Cursor cursor;
     if (keptCurrent >= 0) {

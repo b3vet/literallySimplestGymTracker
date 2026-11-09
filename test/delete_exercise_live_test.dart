@@ -41,10 +41,11 @@ class _FakeLiveActivity extends LiveActivityController {
     DateTime? restEndsAt,
   }) async =>
       updates.add(session);
+  var ends = 0;
   @override
-  Future<void> end() async {}
+  Future<void> end() async => ends++;
   @override
-  Future<void> endAll() async {}
+  Future<void> endAll() async => ends++;
 }
 
 void main() {
@@ -278,6 +279,45 @@ void main() {
       expect(names(c), ['Shoulder Press', 'Curl']);
       expect(session(c).currentExercise!.exerciseName, 'Shoulder Press');
       expect(session(c).cursor.setIdx, 0);
+    });
+
+    // D-0017 review #5: with nothing logged, an emptied workout used to stay
+    // open and FINISH saved an empty completed workout in History, while a
+    // cold start abandoned it. Now it is abandoned at once, as on resume.
+    test('deleting every exercise with nothing logged abandons the workout',
+        () async {
+      final (c, la) = await container(liveActivity: true);
+      await ctrl(c).start(dayId);
+      final sid = session(c).sessionId;
+      await deleteSlot(c, raiseSlot);
+      await deleteSlot(c, curlSlot);
+      expect(c.read(activeSessionProvider).value, isNotNull);
+      expect(la.ends, 0);
+      await deleteSlot(c, pressSlot);
+      expect(c.read(activeSessionProvider).value, isNull);
+      expect((await WorkoutDao(db).findSession(sid))!.status,
+          SessionStatus.abandoned);
+      expect(await WorkoutDao(db).findActiveSession(), isNull);
+      expect(la.ends, greaterThan(0), reason: 'the Live Activity ends');
+      expect(await ctrl(c).finish(), isNull,
+          reason: 'nothing left to save as a completed workout');
+    });
+
+    test('…but an inserted exercise keeps it open', () async {
+      final (c, _) = await container();
+      await ctrl(c).start(dayId);
+      await ctrl(c).insertExercise(
+        name: 'Face Pull',
+        targetSets: 2,
+        targetRepsMin: 12,
+        targetRepsMax: 15,
+        defaultWeightKg: 10,
+      );
+      for (final s in [pressSlot, raiseSlot, curlSlot]) {
+        await deleteSlot(c, s);
+      }
+      expect(names(c), ['Face Pull']);
+      expect(c.read(activeSessionProvider).value, isNotNull);
     });
 
     test('a variant switched in: the slot leaves; its sets stay', () async {
