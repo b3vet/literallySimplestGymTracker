@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ls_workout_tracker/features/history/application/history_provider.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
+import 'package:ls_workout_tracker/features/programs/presentation/program_delete.dart';
 import 'package:ls_workout_tracker/features/workout/application/active_workout_controller.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:ls_workout_tracker/features/workout/domain/workout_session.dart';
@@ -117,6 +118,51 @@ void main() {
     final detail = await c.read(sessionDetailProvider(id).future);
     expect(detail!.dayName, isNull);
     expect(detail.sets.length, 1);
+  });
+
+  // QA after D-0017: History kept the deleted day's label until relaunch.
+  group('History refreshes after the delete flows', () {
+    Future<ProviderContainer> container() async {
+      SharedPreferences.setMockInitialValues({'settings.live_activity': false});
+      final prefs = await SharedPreferences.getInstance();
+      final c = ProviderContainer(
+        overrides: [
+          databaseProvider.overrideWithValue(db),
+          sharedPreferencesProvider.overrideWithValue(prefs),
+        ],
+      );
+      addTearDown(c.dispose);
+      return c;
+    }
+
+    Future<void> expectLabelled(ProviderContainer c, String id,
+        {required String? day, required String? program}) async {
+      final row = (await c.read(historyListProvider.future))
+          .singleWhere((r) => r.session.id == id);
+      expect(row.dayName, day);
+      expect(row.programName, program);
+      expect((await c.read(sessionDetailProvider(id).future))!.dayName, day);
+    }
+
+    test('day delete', () async {
+      final id = await logCompleted(dayId);
+      final c = await container();
+      await expectLabelled(c, id, day: 'Push', program: 'PPL');
+
+      await deleteDayConfirmed(c, programId: programId, dayId: dayId);
+      await expectLabelled(c, id, day: null, program: null);
+    });
+
+    test('program delete', () async {
+      final id = await logCompleted(otherDayId);
+      final c = await container();
+      await expectLabelled(c, id, day: 'Pull', program: 'PPL');
+
+      // As the programs list does it.
+      await pDao.deleteProgram(programId);
+      await closeWorkoutAfterDelete(c);
+      await expectLabelled(c, id, day: null, program: null);
+    });
   });
 
   group('an active workout whose day was deleted', () {

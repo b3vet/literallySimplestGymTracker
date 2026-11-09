@@ -252,18 +252,22 @@ Future<bool> deleteExerciseFlow(
   });
 }
 
-/// After the delete: close the running workout if it lost its day, so Home
-/// stops offering RESUME, and refresh what aggregates completed sessions.
-/// Takes the container, not a `WidgetRef`: the deleted tile is gone by the
-/// time this finishes.
+/// After a program or day delete (both flows end here): close the running
+/// workout if it lost its day, so Home stops offering RESUME, and refresh
+/// what aggregates completed sessions. Takes the container, not a
+/// `WidgetRef`: the deleted tile is gone by the time this finishes.
 Future<void> closeWorkoutAfterDelete(ProviderContainer container) async {
   final closed = await container
       .read(activeSessionProvider.notifier)
       .closeIfDetached();
+  // Always: the deleted day's sessions are detached now, so History must stop
+  // showing its old day/program label ("WORKOUT" instead) without a relaunch.
+  container
+    ..invalidate(historyListProvider)
+    ..invalidate(sessionDetailProvider);
   if (!closed) return;
   container
     ..invalidate(lastSessionSummaryProvider)
-    ..invalidate(historyListProvider)
     ..invalidate(loggedExercisesProvider)
     ..invalidate(exerciseProgressionProvider);
 }
