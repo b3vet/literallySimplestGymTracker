@@ -133,7 +133,10 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
                   // Content-area eyebrow → page content, not topbar.
                   Align(
                     alignment: Alignment.centerRight,
-                    child: EyebrowLabel('PROGRAM · ${list.length} DAYS'),
+                    child: EyebrowLabel(
+                      'PROGRAM · ${list.length} '
+                      '${list.length == 1 ? "DAY" : "DAYS"}',
+                    ),
                   ),
                   const SizedBox(height: LsGap.sub),
                   Expanded(

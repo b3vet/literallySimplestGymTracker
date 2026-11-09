@@ -239,6 +239,19 @@ void main() {
       await closeDb(tester);
     });
 
+    // D-0017 #6: the eyebrow said "PROGRAM · 1 DAYS".
+    testWidgets('the eyebrow counts one day in the singular', (tester) async {
+      await seed(tester);
+      await pumpAt(tester, '/programs/$programId');
+      expect(find.text('PROGRAM · 2 DAYS'), findsOneWidget);
+      await tapEdit(tester);
+      await tester.tap(find.bySemanticsLabel('Delete Pull'));
+      await settleDb(tester);
+      await confirm(tester);
+      expect(find.text('PROGRAM · 1 DAY'), findsOneWidget);
+      await closeDb(tester);
+    });
+
     testWidgets('swipe-to-delete still works in EDIT mode', (tester) async {
       await seed(tester);
       await pumpAt(tester, '/programs/$programId');
