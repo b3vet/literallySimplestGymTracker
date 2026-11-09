@@ -313,8 +313,8 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   /// on, since the queue is built from the plan.
   ///
   /// Cursor: a kept current slot stays current. If the current slot was
-  /// dropped, the cursor moves to the next remaining slot that isn't skipped;
-  /// with none after it, to the first slot with sets left ([cursorAfter]) —
+  /// dropped, the cursor moves to the next remaining slot that isn't skipped
+  /// or complete; with none after it, to the first slot with sets left ([cursorAfter]) —
   /// or the finished state, where the workout stays open and FINISH still
   /// works. The Live Activity is updated here and the watch snapshot follows
   /// the state change, so neither keeps showing the dropped slot. Returns
@@ -348,7 +348,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       cursor = Cursor(exerciseIdx: kept.length, setIdx: 0);
     } else {
       var idx = keptBefore;
-      while (idx < kept.length && kept[idx].skipped) {
+      // Walk past skipped and already complete slots (D-0017 review #2:
+      // landing on a done slot showed set 3/2).
+      while (idx < kept.length &&
+          (kept[idx].skipped || kept[idx].isCompleteIn(now.loggedSets))) {
         idx++;
       }
       cursor = idx < kept.length

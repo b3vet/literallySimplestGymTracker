@@ -264,6 +264,22 @@ void main() {
       expect((await WorkoutDao(db).setsForSession(sid)).length, 1);
     });
 
+    // D-0017 review #2: the next slot after the deleted current one was
+    // already complete — the cursor must not land on it (Curl at set 3/2).
+    test('deleting the current exercise skips a completed next slot',
+        () async {
+      final (c, _) = await container();
+      await ctrl(c).start(dayId);
+      await ctrl(c).goToExerciseIndex(2);
+      await log(c, 2); // Curl done
+      await ctrl(c).goToExerciseIndex(1); // back on the raise; press untouched
+      expect(session(c).currentExercise!.exerciseName, 'Lateral Raise');
+      await deleteSlot(c, raiseSlot);
+      expect(names(c), ['Shoulder Press', 'Curl']);
+      expect(session(c).currentExercise!.exerciseName, 'Shoulder Press');
+      expect(session(c).cursor.setIdx, 0);
+    });
+
     test('a variant switched in: the slot leaves; its sets stay', () async {
       final (c, _) = await container();
       await ctrl(c).start(dayId);
