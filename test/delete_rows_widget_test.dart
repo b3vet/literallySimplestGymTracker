@@ -320,6 +320,35 @@ void main() {
       await closeDb(tester);
     });
 
+    // D-0017 #7: only the day swipe was covered.
+    testWidgets('swipe-to-delete on an exercise row in EDIT mode', (
+      tester,
+    ) async {
+      await seed(tester);
+      await pumpAt(tester, '/programs/$programId/days/$pushId');
+      await tester.drag(find.text('DIPS'), const Offset(-500, 0));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsNothing,
+          reason: 'no swipe outside EDIT mode');
+
+      await tapEdit(tester);
+      await tester.drag(find.text('DIPS'), const Offset(-500, 0));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsOneWidget);
+      expect(find.text(deleteKeepsHistoryLine), findsOneWidget);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
+      expect(find.text('DIPS'), findsOneWidget, reason: 'CANCEL keeps it');
+
+      await tester.drag(find.text('DIPS'), const Offset(-500, 0));
+      await settleDb(tester);
+      await confirm(tester);
+      final left = await tester.runAsync(() => dao.listProgramExercises(pushId));
+      expect(left!.map((v) => v.exerciseName), ['Bench Press']);
+      expect(find.text('DIPS'), findsNothing);
+      await closeDb(tester);
+    });
+
     testWidgets('DELETE DAY: a second tap while loading is ignored', (
       tester,
     ) async {
