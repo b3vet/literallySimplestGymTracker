@@ -447,6 +447,38 @@ void main() {
       expect(updates.where((u) => u.programExerciseId == pressSlot), isEmpty);
     });
 
+    // D-0017 review #1: with another slot swapped ("Change exercise"), the
+    // swap-chain fallback used to attribute the deleted slot's exercise to
+    // that slot and offer SAVE AS VARIANT: Lateral Raise → Curl.
+    test('a deleted slot is not attributed to another swapped slot',
+        () async {
+      final (c, _) = await container();
+      await ctrl(c).start(dayId);
+      await ctrl(c).goToExerciseIndex(1);
+      await log(c); // 1 set of the raise
+      await ctrl(c).substituteExercise(
+        queueIdx: 2,
+        exerciseName: 'Cable Curl',
+        targetSets: 2,
+        targetRepsMin: 10,
+        targetRepsMax: 12,
+        defaultWeightKg: 10,
+      );
+      await deleteSlot(c, raiseSlot);
+      final sid = (await ctrl(c).finish())!;
+
+      final s = await c.read(sessionSummaryProvider(sid).future);
+      final raise = s!.exercises.singleWhere((e) => e.exerciseId == raiseId);
+      expect(raise.setCount, 1);
+      expect(raise.inPlan, isFalse);
+      expect(raise.substituteSlotPe, isNull);
+      expect(raise.droppedFromDay, isTrue);
+      final updates = await c.read(programUpdatesProvider(sid).future);
+      expect(updates.where((u) => u.exerciseId == raiseId), isEmpty);
+      expect(updates.where((u) => u.kind == ProgramUpdateKind.addVariant),
+          isEmpty);
+    });
+
     test('droppedSlotExerciseIds reads the marker; inserted ids excluded',
         () async {
       final (c, _) = await container();

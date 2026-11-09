@@ -251,13 +251,14 @@ final sessionSummaryProvider =
         await programDao.listVariantsForDay(session.programDayId!);
   }
   final overrides = await dao.overridesForSession(sessionId);
+  final dropped = droppedSlotExerciseIds(slots: slots, overrides: overrides);
   final attribution = attributeToSlots(
     exerciseIds: orderedIds,
     slots: slots,
     variantsBySlot: variantsBySlot,
     overrides: overrides,
+    droppedIds: dropped,
   );
-  final dropped = droppedSlotExerciseIds(slots: slots, overrides: overrides);
 
   // Previous completed session on this same day — drives every "vs last"
   // comparison on the screen, plus the headline volume delta.
@@ -421,12 +422,16 @@ class SlotAttribution {
 /// none of them was a swap — attributed to the swapped slot when exactly one
 /// slot was swapped outside its members and no inserted exercise was swapped
 /// (whose own chain could have lost links). Otherwise it stays unattributed
-/// (ADD TO DAY), a documented limitation. Pure for tests.
+/// (ADD TO DAY), a documented limitation. [droppedIds] — what a slot deleted
+/// mid-workout ran ([droppedSlotExerciseIds], SOW-15) — never takes that
+/// fallback either: those exercises got there through a slot, just not one
+/// still on the day (D-0017 review #1). Pure for tests.
 Map<String, SlotAttribution> attributeToSlots({
   required List<String> exerciseIds,
   required List<ProgramExerciseView> slots,
   required Map<String, List<ProgramExerciseVariantView>> variantsBySlot,
   required List<SessionExerciseOverride> overrides,
+  Set<String> droppedIds = const {},
 }) {
   final bases = {for (final s in slots) s.pe.exerciseId};
   final slotById = {for (final s in slots) s.pe.id: s};
@@ -505,7 +510,10 @@ Map<String, SlotAttribution> attributeToSlots({
         }
       }
     }
-    if (found == null && chainSlot != null && !insertedIds.contains(id)) {
+    if (found == null &&
+        chainSlot != null &&
+        !insertedIds.contains(id) &&
+        !droppedIds.contains(id)) {
       found = SlotAttribution(slot: chainSlot);
     }
     if (found != null) out[id] = found;
