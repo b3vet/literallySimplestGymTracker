@@ -16,9 +16,16 @@ import 'workout_progress.dart';
 const liveActivityAppGroup = 'group.com.berkeucvet.lsWorkoutTracker';
 
 class LiveActivityController {
-  LiveActivityController();
+  /// [plugin] and [supported] are test seams: a fake plugin, and forcing the
+  /// iOS-only guard on so the controller's logic runs off-device.
+  LiveActivityController({
+    LiveActivities? plugin,
+    @visibleForTesting bool? supported,
+  })  : _plugin = plugin ?? LiveActivities(),
+        _supportedOverride = supported;
 
-  final LiveActivities _plugin = LiveActivities();
+  final LiveActivities _plugin;
+  final bool? _supportedOverride;
   bool _initialized = false;
   String? _activityId;
 
@@ -33,7 +40,7 @@ class LiveActivityController {
     return next;
   }
 
-  bool get _supported => !kIsWeb && Platform.isIOS;
+  bool get _supported => _supportedOverride ?? (!kIsWeb && Platform.isIOS);
 
   Future<void> _ensureInit() async {
     if (_initialized || !_supported) return;
@@ -52,9 +59,13 @@ class LiveActivityController {
   }
 
   /// Start a new activity for the current workout. Safe to call repeatedly;
-  /// subsequent calls overwrite any prior activity. If the session has no
-  /// active exercise (everything already done) we just end any stale
-  /// activity instead of creating a new one.
+  /// subsequent calls overwrite any prior activity. Ends EVERY activity of
+  /// this app first, not just the one this process created: after iOS kills
+  /// the app mid-workout, resume lands here with no id for the card the dead
+  /// process left on the lock screen (QA DEL-18). There is at most one
+  /// workout, so there is never a card worth keeping. If the session has no
+  /// active exercise (everything already done) we just end the stale
+  /// activities instead of creating a new one.
   Future<void> start({
     required ActiveSession session,
     required WeightUnit unit,
@@ -66,7 +77,7 @@ class LiveActivityController {
       await _ensureInit();
       if (!_initialized) return;
       try {
-        await _endLocked();
+        await _endAllLocked();
         final progress = WorkoutProgress.from(session);
         if (progress.allDone) {
           debugPrint(
@@ -113,13 +124,18 @@ class LiveActivityController {
       if (!_initialized) return;
       final progress = WorkoutProgress.from(session);
       if (progress.allDone) {
-        await _endLocked();
+        // All of them: a card left by a previous process would outlive the
+        // workout otherwise (QA DEL-18).
+        await _endAllLocked();
         return;
       }
       try {
         final state = _stateFromProgress(progress,
             unit: unit, accent: accent, restEndsAt: restEndsAt);
         if (_activityId == null) {
+          // No card known to this process — but a previous one may have left
+          // one on the lock screen. Clear it so this can't become a second.
+          await _endAllLocked();
           final id = await _plugin.createOrUpdateActivity(
             session.sessionId,
             state,
@@ -140,20 +156,26 @@ class LiveActivityController {
   Future<void> end() => _enqueue(() => _endLocked());
 
   /// End every activity this app has on the lock screen, including one left
-  /// by a previous process (whose id this instance never learned) — used when
-  /// a workout is closed for it, e.g. its program was deleted mid-workout.
+  /// by a previous process (whose id this instance never learned) — used
+  /// whenever a workout ends (finish, abandon, closed because its program or
+  /// day was deleted).
   Future<void> endAll() => _enqueue(() async {
         if (!_supported) return;
         await _ensureInit();
         if (!_initialized) return;
-        try {
-          await _plugin.endAllActivities();
-          debugPrint('[LiveActivity] endAllActivities OK');
-        } catch (e) {
-          debugPrint('[LiveActivity] endAllActivities FAILED: $e');
-        }
-        _activityId = null;
+        await _endAllLocked();
       });
+
+  /// Callers hold the queue and have run [_ensureInit].
+  Future<void> _endAllLocked() async {
+    try {
+      await _plugin.endAllActivities();
+      debugPrint('[LiveActivity] endAllActivities OK');
+    } catch (e) {
+      debugPrint('[LiveActivity] endAllActivities FAILED: $e');
+    }
+    _activityId = null;
+  }
 
   Future<void> _endLocked() async {
     if (!_supported) return;

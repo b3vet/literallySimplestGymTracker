@@ -1197,7 +1197,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     await _workoutDao.completeSession(current.sessionId);
     state = const AsyncValue.data(null);
     _invalidateLastSets();
-    await _liveActivity.end();
+    // All activities, not only this process's: after a cold-start resume the
+    // previous process's card would otherwise survive the finish (QA DEL-18).
+    await _liveActivity.endAll();
     return current.sessionId;
   }
 
@@ -1208,6 +1210,6 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     await _workoutDao.abandonSession(current.sessionId);
     state = const AsyncValue.data(null);
     _invalidateLastSets();
-    await _liveActivity.end();
+    await _liveActivity.endAll(); // see finish() — QA DEL-18
   }
 }
