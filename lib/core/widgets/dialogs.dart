@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -163,29 +165,48 @@ Widget dismissBackground() => Builder(
 /// SOW-15: the visible delete control on an editable row (EDIT mode), next to
 /// the swipe. Red, 44 × 44 tap target, read out as `Delete <name>` with a tap
 /// action (the `Semantics` excludes the InkWell's own node, so it re-declares
-/// `onTap` — D-0017 review #3).
-class DeleteRowButton extends StatelessWidget {
+/// `onTap` — D-0017 review #3). While the future [onPressed] returns is
+/// pending, further taps are ignored (review #4: two fast taps stacked two
+/// confirm dialogs).
+class DeleteRowButton extends StatefulWidget {
   const DeleteRowButton({
     super.key,
     required this.name,
     required this.onPressed,
   });
   final String name;
-  final VoidCallback onPressed;
+  final FutureOr<void> Function() onPressed;
+
+  @override
+  State<DeleteRowButton> createState() => _DeleteRowButtonState();
+}
+
+class _DeleteRowButtonState extends State<DeleteRowButton> {
+  bool _busy = false;
+
+  Future<void> _tap() async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      await widget.onPressed();
+    } finally {
+      if (mounted) _busy = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Semantics(
       container: true,
       button: true,
-      label: 'Delete $name',
+      label: 'Delete ${widget.name}',
       excludeSemantics: true,
-      onTap: onPressed,
+      onTap: _tap,
       child: Material(
         type: MaterialType.transparency,
         child: InkWell(
           borderRadius: BorderRadius.circular(LsRadius.r3),
-          onTap: onPressed,
+          onTap: _tap,
           child: const SizedBox(
             width: 44,
             height: 44,

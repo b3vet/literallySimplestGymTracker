@@ -29,10 +29,49 @@ const deleteDropsExerciseWarning =
     'Your workout in progress will drop this exercise; sets already logged '
     'are kept.';
 
+/// D-0017 review #4: one delete at a time per app (provider container). The
+/// confirm reads the DB before its dialog shows, so a fast second tap — on
+/// DELETE DAY, a row's button, a swipe — used to open a second dialog, and
+/// confirming then popped the wrong route. While a delete is in flight (the
+/// reads, the dialog and the delete itself) another one is ignored and
+/// returns false.
+final _deleteBusy = Expando<bool>('deleteBusy');
+
+Future<bool> _guarded(
+  ProviderContainer container,
+  Future<bool> Function() body,
+) async {
+  if (_deleteBusy[container] ?? false) return false;
+  _deleteBusy[container] = true;
+  try {
+    return await body();
+  } finally {
+    _deleteBusy[container] = null;
+  }
+}
+
 /// Confirm deleting a program ([programId]) or a day ([dayId]), warning when
 /// the running workout is on it. A day's dialog also says how many exercises
-/// go with it.
+/// go with it. Returns false at once while another delete is in flight.
 Future<bool> confirmProgramDelete(
+  BuildContext context,
+  WidgetRef ref, {
+  required String label,
+  String? programId,
+  String? dayId,
+}) =>
+    _guarded(
+      ProviderScope.containerOf(context, listen: false),
+      () => _confirmProgramDelete(
+        context,
+        ref,
+        label: label,
+        programId: programId,
+        dayId: dayId,
+      ),
+    );
+
+Future<bool> _confirmProgramDelete(
   BuildContext context,
   WidgetRef ref, {
   required String label,
@@ -80,6 +119,7 @@ Future<void> deleteDayConfirmed(
 
 /// Confirm, then delete the day. Returns whether it was deleted.
 /// [onConfirmed] runs between the two (the day editor pops itself there).
+/// A second call while one is in flight is ignored (returns false).
 Future<bool> deleteDayFlow(
   BuildContext context,
   WidgetRef ref, {
@@ -87,20 +127,39 @@ Future<bool> deleteDayFlow(
   required String dayId,
   required String label,
   VoidCallback? onConfirmed,
-}) async {
+}) {
   final container = ProviderScope.containerOf(context, listen: false);
-  final ok =
-      await confirmProgramDelete(context, ref, label: label, dayId: dayId);
-  if (!ok) return false;
-  onConfirmed?.call();
-  await deleteDayConfirmed(container, programId: programId, dayId: dayId);
-  return true;
+  return _guarded(container, () async {
+    final ok =
+        await _confirmProgramDelete(context, ref, label: label, dayId: dayId);
+    if (!ok) return false;
+    onConfirmed?.call();
+    await deleteDayConfirmed(container, programId: programId, dayId: dayId);
+    return true;
+  });
 }
 
 /// Confirm deleting one exercise (a program slot): how many variants go with
 /// it, that History keeps its sets, and — when the running workout is on its
-/// day — that the workout drops it.
+/// day — that the workout drops it. Returns false at once while another
+/// delete is in flight.
 Future<bool> confirmExerciseDelete(
+  BuildContext context,
+  WidgetRef ref, {
+  required String label,
+  required String programExerciseId,
+}) =>
+    _guarded(
+      ProviderScope.containerOf(context, listen: false),
+      () => _confirmExerciseDelete(
+        context,
+        ref,
+        label: label,
+        programExerciseId: programExerciseId,
+      ),
+    );
+
+Future<bool> _confirmExerciseDelete(
   BuildContext context,
   WidgetRef ref, {
   required String label,
@@ -142,28 +201,31 @@ Future<void> deleteExerciseConfirmed(
     ..invalidate(programExerciseProvider(programExerciseId));
 }
 
-/// Confirm, then delete the exercise. Returns whether it was deleted.
+/// Confirm, then delete the exercise. Returns whether it was deleted. A
+/// second call while one is in flight is ignored (returns false).
 Future<bool> deleteExerciseFlow(
   BuildContext context,
   WidgetRef ref, {
   required String programExerciseId,
   required String dayId,
   required String label,
-}) async {
+}) {
   final container = ProviderScope.containerOf(context, listen: false);
-  final ok = await confirmExerciseDelete(
-    context,
-    ref,
-    label: label,
-    programExerciseId: programExerciseId,
-  );
-  if (!ok) return false;
-  await deleteExerciseConfirmed(
-    container,
-    programExerciseId: programExerciseId,
-    dayId: dayId,
-  );
-  return true;
+  return _guarded(container, () async {
+    final ok = await _confirmExerciseDelete(
+      context,
+      ref,
+      label: label,
+      programExerciseId: programExerciseId,
+    );
+    if (!ok) return false;
+    await deleteExerciseConfirmed(
+      container,
+      programExerciseId: programExerciseId,
+      dayId: dayId,
+    );
+    return true;
+  });
 }
 
 /// After the delete: close the running workout if it lost its day, so Home

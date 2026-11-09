@@ -215,6 +215,30 @@ void main() {
       await closeDb(tester);
     });
 
+    // D-0017 review #4: two fast taps used to stack two dialogs.
+    testWidgets('a second tap while the confirm is loading is ignored', (
+      tester,
+    ) async {
+      await seed(tester);
+      await pumpAt(tester, '/programs/$programId');
+      await tapEdit(tester);
+      await tester.tap(find.bySemanticsLabel('Delete Push'));
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Delete Push'));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsOneWidget);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsNothing);
+      // The guard is released: the next tap opens the dialog again.
+      await tester.tap(find.bySemanticsLabel('Delete Push'));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsOneWidget);
+      await tester.tap(find.text('CANCEL'));
+      await settleDb(tester);
+      await closeDb(tester);
+    });
+
     testWidgets('swipe-to-delete still works in EDIT mode', (tester) async {
       await seed(tester);
       await pumpAt(tester, '/programs/$programId');
@@ -280,6 +304,35 @@ void main() {
       expect(find.textContaining('variant'), findsNothing);
       await tester.tap(find.text('CANCEL'));
       await settleDb(tester);
+      await closeDb(tester);
+    });
+
+    testWidgets('DELETE DAY: a second tap while loading is ignored', (
+      tester,
+    ) async {
+      await seed(tester);
+      final router = await pumpAt(tester, '/programs/$programId');
+      router.push('/programs/$programId/days/$pushId');
+      await settleDb(tester);
+      await tester.tap(find.descendant(
+        of: find.byType(DayEditorScreen),
+        matching: find.text('EDIT'),
+      ));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text('DELETE DAY'));
+      await tester.tap(find.text('DELETE DAY'));
+      await tester.pump();
+      await tester.tap(find.text('DELETE DAY'));
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsOneWidget);
+      await confirm(tester);
+      await settleDb(tester);
+      expect(find.text('DELETE?'), findsNothing);
+      expect(find.byType(DayEditorScreen), findsNothing);
+      expect(find.byType(ProgramEditorScreen), findsOneWidget,
+          reason: 'one pop: the program editor stays');
+      final days = await tester.runAsync(() => dao.listDays(programId));
+      expect(days!.map((d) => d.name), ['Pull']);
       await closeDb(tester);
     });
 
