@@ -333,27 +333,52 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   /// same rule as on resume. The Live Activity is updated here and the watch
   /// snapshot follows the state change, so neither keeps showing the dropped
   /// slot. Returns whether anything was dropped.
+  ///
+  /// The delete also renumbered the day's slots and remapped this workout's
+  /// inserted keys (see [ProgramDao.deleteProgramExercise]); the kept slots
+  /// take those new positions, so a later insert is placed against the same
+  /// numbers a resume rebuilds from. The order itself does not change.
   Future<bool> dropDeletedSlots() async {
     final current = state.value;
     if (current == null) return false;
     final planned =
         await _programDao.listProgramExercises(current.programDayId);
-    final live = {for (final v in planned) v.pe.id};
+    final live = {for (final v in planned) v.pe.id: v.pe.position};
+    final insertedPos = {
+      for (final o in await _workoutDao.overridesForSession(current.sessionId))
+        if (o.inserted && o.orderPos != null) o.programExerciseId: o.orderPos!,
+    };
     // Re-read: the state may have moved while the plan was loading.
     final now = state.value;
     if (now == null || now.sessionId != current.sessionId) return false;
+    PlannedExercise synced(PlannedExercise s) {
+      final pos = s.isInserted
+          ? insertedPos[s.programExerciseId]
+          : live[s.programExerciseId]?.toDouble();
+      return pos == null || pos == s.position ? s : s.copyWith(position: pos);
+    }
+
     final oldIdx = now.cursor.exerciseIdx;
     final kept = <PlannedExercise>[];
     var keptCurrent = -1;
     var keptBefore = 0;
     for (var i = 0; i < now.queue.length; i++) {
       final slot = now.queue[i];
-      if (!slot.isInserted && !live.contains(slot.programExerciseId)) continue;
+      if (!slot.isInserted && !live.containsKey(slot.programExerciseId)) {
+        continue;
+      }
       if (i == oldIdx) keptCurrent = kept.length;
       if (i < oldIdx) keptBefore++;
-      kept.add(slot);
+      kept.add(synced(slot));
     }
-    if (kept.length == now.queue.length) return false;
+    if (kept.length == now.queue.length) {
+      // Nothing dropped (the slot was added after the workout started), but
+      // the renumbering may still have moved the kept slots' keys.
+      final moved =
+          kept.indexed.any((e) => e.$2.position != now.queue[e.$1].position);
+      if (moved) state = AsyncValue.data(now.copyWith(queue: kept));
+      return false;
+    }
     if (kept.isEmpty && now.loggedSets.isEmpty) {
       // Nothing left and nothing logged (inserted exercises are always kept,
       // so none was inserted either): abandon now, as a resume would, rather

@@ -363,6 +363,39 @@ void main() {
       expect(names(c), ['Face Pull', 'Lateral Raise', 'Curl']);
     });
 
+    // The delete renumbers the day's slots; an inserted exercise's key is
+    // remapped with them, so it keeps its place now, on resume, and for a
+    // later insert.
+    test('an inserted exercise keeps its place across the renumbering',
+        () async {
+      final (first, _) = await container();
+      await ctrl(first).start(dayId);
+      await log(first, 2); // Press done → cursor on Lateral Raise
+      await ctrl(first).insertExercise(
+        name: 'Face Pull',
+        targetSets: 2,
+        targetRepsMin: 12,
+        targetRepsMax: 15,
+        defaultWeightKg: 10,
+      ); // between Lateral Raise and Curl
+      await deleteSlot(first, pressSlot);
+      expect(names(first), ['Lateral Raise', 'Face Pull', 'Curl']);
+      expect([for (final s in session(first).queue) s.position], [0, 0.5, 1]);
+      await log(first, 2); // Lateral Raise done → cursor on Face Pull
+      await ctrl(first).insertExercise(
+        name: 'Dip',
+        targetSets: 2,
+        targetRepsMin: 8,
+        targetRepsMax: 12,
+        defaultWeightKg: 0,
+      ); // after Face Pull, before Curl
+      expect(names(first), ['Lateral Raise', 'Face Pull', 'Dip', 'Curl']);
+      first.dispose();
+
+      final (c, _) = await container();
+      expect(names(c), ['Lateral Raise', 'Face Pull', 'Dip', 'Curl']);
+    });
+
     test('a delete on another day changes nothing', () async {
       final (c, _) = await container();
       await ctrl(c).start(dayId);

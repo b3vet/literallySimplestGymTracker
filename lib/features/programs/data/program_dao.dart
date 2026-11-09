@@ -85,7 +85,7 @@ class ProgramDao {
       'program_days',
       where: 'program_id = ?',
       whereArgs: [programId],
-      orderBy: 'position ASC',
+      orderBy: _byPosition,
     );
     return rows.map(ProgramDay.fromRow).toList();
   }
@@ -96,20 +96,19 @@ class ProgramDao {
     return rows.isEmpty ? null : ProgramDay.fromRow(rows.first);
   }
 
+  /// Add a day, last in order.
   Future<ProgramDay> createDay(String programId, String name) async {
-    final count = Sqflite.firstIntValue(await _db.rawQuery(
-          'SELECT COUNT(*) FROM program_days WHERE program_id = ?',
-          [programId],
-        )) ??
-        0;
-    final day = ProgramDay(
-      id: _uuid.v4(),
-      programId: programId,
-      name: name.trim(),
-      position: count,
-    );
-    await _db.insert('program_days', day.toRow());
-    return day;
+    return _db.transaction((txn) async {
+      final day = ProgramDay(
+        id: _uuid.v4(),
+        programId: programId,
+        name: name.trim(),
+        position:
+            await _nextPosition(txn, 'program_days', 'program_id', programId),
+      );
+      await txn.insert('program_days', day.toRow());
+      return day;
+    });
   }
 
   Future<void> renameDay(String id, String name) async {
@@ -122,9 +121,12 @@ class ProgramDao {
   }
 
   /// Delete a day with its slots (cascade), keeping and detaching any workouts
-  /// logged against it — see [deleteProgram].
+  /// logged against it — see [deleteProgram]. The program's remaining days
+  /// are renumbered 0..n-1 in the same transaction, so a later add lands last.
   Future<void> deleteDay(String id) async {
     await _db.transaction((txn) async {
+      final day = await txn.query('program_days',
+          columns: ['program_id'], where: 'id = ?', whereArgs: [id], limit: 1);
       await txn.update(
         'workout_sessions',
         {'program_day_id': null},
@@ -132,13 +134,18 @@ class ProgramDao {
         whereArgs: [id],
       );
       await txn.delete('program_days', where: 'id = ?', whereArgs: [id]);
+      if (day.isNotEmpty) {
+        await _renumber(txn, 'program_days', 'program_id',
+            day.first['program_id'] as String);
+      }
     });
   }
 
   // ---------- Copy (SOW-13) ----------
 
   /// Deep-copy a program: the program row, every day and every slot, each
-  /// under a fresh id, positions kept. The copy points at the SAME `exercises`
+  /// under a fresh id, order kept (positions renumbered 0..n-1, so a source
+  /// with gaps or duplicate positions copies clean). The copy points at the SAME `exercises`
   /// rows (the shared library), so PRs, Stats and last-set prefill carry over;
   /// sessions, sets and session overrides are never copied. One transaction:
   /// a failure leaves no half-copied program behind.
@@ -157,9 +164,9 @@ class ProgramDao {
         'program_days',
         where: 'program_id = ?',
         whereArgs: [programId],
-        orderBy: 'position ASC',
+        orderBy: _byPosition,
       );
-      for (final d in days) {
+      for (final (i, d) in days.indexed) {
         final day = ProgramDay.fromRow(d);
         final newDayId = _uuid.v4();
         await txn.insert(
@@ -168,7 +175,7 @@ class ProgramDao {
             id: newDayId,
             programId: copy.id,
             name: day.name,
-            position: day.position,
+            position: i,
           ).toRow(),
         );
         await _copySlots(txn, fromDayId: day.id, toDayId: newDayId);
@@ -188,18 +195,12 @@ class ProgramDao {
       );
       if (rows.isEmpty) throw StateError('Day $dayId not found.');
       final source = ProgramDay.fromRow(rows.first);
-      // MAX + 1, not COUNT: deleting a day leaves a gap in the positions, so a
-      // count could collide with the last day.
-      final maxPos = Sqflite.firstIntValue(await txn.rawQuery(
-            'SELECT MAX(position) FROM program_days WHERE program_id = ?',
-            [source.programId],
-          )) ??
-          -1;
       final copy = ProgramDay(
         id: _uuid.v4(),
         programId: source.programId,
         name: name.trim(),
-        position: maxPos + 1,
+        position: await _nextPosition(
+            txn, 'program_days', 'program_id', source.programId),
       );
       await txn.insert('program_days', copy.toRow());
       await _copySlots(txn, fromDayId: source.id, toDayId: copy.id);
@@ -208,9 +209,10 @@ class ProgramDao {
   }
 
   /// Copy every slot of [fromDayId] — and each slot's variants — into
-  /// [toDayId] under new ids. Copies raw rows (all columns but the ids), so a
-  /// column added by a later migration is carried along without touching this
-  /// code.
+  /// [toDayId] under new ids. Copies raw rows (all columns but the ids and
+  /// positions), so a column added by a later migration is carried along
+  /// without touching this code. Order is kept; positions are renumbered
+  /// 0..n-1 (slots, and each slot's copied variants).
   Future<void> _copySlots(
     Transaction txn, {
     required String fromDayId,
@@ -220,25 +222,27 @@ class ProgramDao {
       'program_exercises',
       where: 'program_day_id = ?',
       whereArgs: [fromDayId],
-      orderBy: 'position ASC',
+      orderBy: _byPosition,
     );
     // SOW-14 day rule: a variant that collides with a base on the day, or
     // repeats an earlier variant, is not copied (the base / first one wins) —
     // the same rows [listVariantsForDay] hides, so the copy looks identical.
     final bases = {for (final s in slots) s['exercise_id'] as String};
     final usedVariants = <String>{};
-    for (final slot in slots) {
+    for (final (slotPos, slot) in slots.indexed) {
       final newSlotId = _uuid.v4();
       final row = Map<String, Object?>.of(slot)
         ..['id'] = newSlotId
-        ..['program_day_id'] = toDayId;
+        ..['program_day_id'] = toDayId
+        ..['position'] = slotPos;
       await txn.insert('program_exercises', row);
       final variants = await txn.query(
         'program_exercise_variants',
         where: 'program_exercise_id = ?',
         whereArgs: [slot['id']],
-        orderBy: 'position ASC',
+        orderBy: _byPosition,
       );
+      var variantPos = 0;
       for (final v in variants) {
         final exerciseId = v['exercise_id'] as String;
         if (bases.contains(exerciseId) || !usedVariants.add(exerciseId)) {
@@ -248,7 +252,8 @@ class ProgramDao {
           'program_exercise_variants',
           Map<String, Object?>.of(v)
             ..['id'] = _uuid.v4()
-            ..['program_exercise_id'] = newSlotId,
+            ..['program_exercise_id'] = newSlotId
+            ..['position'] = variantPos++,
         );
       }
     }
@@ -328,7 +333,8 @@ class ProgramDao {
       JOIN program_days pd ON pd.id = pe.program_day_id
       JOIN programs p      ON p.id  = pd.program_id
       WHERE e.name = ? COLLATE NOCASE
-      ORDER BY p.created_at DESC, pd.position DESC, pe.position DESC
+      ORDER BY p.created_at DESC, pd.position DESC, pd.rowid DESC,
+               pe.position DESC, pe.rowid DESC
       LIMIT 1
       ''',
       [name.trim()],
@@ -346,7 +352,7 @@ class ProgramDao {
       FROM program_exercises pe
       JOIN exercises e ON e.id = pe.exercise_id
       WHERE pe.program_day_id = ?
-      ORDER BY pe.position ASC
+      ORDER BY pe.position ASC, pe.rowid ASC
       ''',
       [programDayId],
     );
@@ -376,16 +382,12 @@ class ProgramDao {
         throw VariantConflict(
             VariantConflictReason.variantOfAnotherSlot, exercise.name);
       }
-      final count = Sqflite.firstIntValue(await txn.rawQuery(
-            'SELECT COUNT(*) FROM program_exercises WHERE program_day_id = ?',
-            [programDayId],
-          )) ??
-          0;
       final pe = ProgramExercise(
         id: _uuid.v4(),
         programDayId: programDayId,
         exerciseId: exercise.id,
-        position: count,
+        position: await _nextPosition(
+            txn, 'program_exercises', 'program_day_id', programDayId),
         targetSets: targetSets,
         targetRepsMin: targetRepsMin,
         targetRepsMax: targetRepsMax,
@@ -453,13 +455,19 @@ class ProgramDao {
   /// the summary reads it so it does not offer ADD TO DAY for the exercise
   /// just deleted from the day. No schema change: `program_exercise_id` has
   /// no foreign key.
+  ///
+  /// The day's remaining slots are renumbered 0..n-1 in the same
+  /// transaction, so a later add lands last. That workout's inserted
+  /// exercises (`order_pos`, placed between the old integer positions) are
+  /// remapped with [remapOrderPos] so they keep their place in the queue.
   Future<void> deleteProgramExercise(String id) async {
     await _db.transaction((txn) async {
       final slot = await txn.query('program_exercises',
           where: 'id = ?', whereArgs: [id], limit: 1);
+      var active = const <Map<String, Object?>>[];
       if (slot.isNotEmpty) {
         final pe = ProgramExercise.fromRow(slot.first);
-        final active = await txn.query('workout_sessions',
+        active = await txn.query('workout_sessions',
             columns: ['id'],
             where: "program_day_id = ? AND status = 'active'",
             whereArgs: [pe.programDayId]);
@@ -488,6 +496,22 @@ class ProgramDao {
         }
       }
       await txn.delete('program_exercises', where: 'id = ?', whereArgs: [id]);
+      if (slot.isEmpty) return;
+      final oldPositions = await _renumber(txn, 'program_exercises',
+          'program_day_id', slot.first['program_day_id'] as String);
+      for (final s in active) {
+        final inserted = await txn.query('session_exercise_overrides',
+            columns: ['id', 'order_pos'],
+            where: 'session_id = ? AND inserted = 1 AND order_pos IS NOT NULL',
+            whereArgs: [s['id']]);
+        for (final o in inserted) {
+          final pos = (o['order_pos'] as num).toDouble();
+          final next = remapOrderPos(pos, oldPositions);
+          if (next == pos) continue;
+          await txn.update('session_exercise_overrides', {'order_pos': next},
+              where: 'id = ?', whereArgs: [o['id']]);
+        }
+      }
     });
   }
 
@@ -561,7 +585,7 @@ class ProgramDao {
       JOIN exercises e ON e.id = v.exercise_id
       JOIN program_exercises pe ON pe.id = v.program_exercise_id
       WHERE pe.program_day_id = ?
-      ORDER BY pe.position ASC, v.position ASC
+      ORDER BY pe.position ASC, pe.rowid ASC, v.position ASC, v.rowid ASC
       ''',
       [programDayId],
     );
@@ -593,17 +617,12 @@ class ProgramDao {
     final exercise = await findOrCreateExercise(exerciseName);
     return _db.transaction((txn) async {
       await _checkVariant(txn, programExerciseId, exercise.id, exercise.name);
-      final maxPos = Sqflite.firstIntValue(await txn.rawQuery(
-            'SELECT MAX(position) FROM program_exercise_variants '
-            'WHERE program_exercise_id = ?',
-            [programExerciseId],
-          )) ??
-          -1;
       final v = ProgramExerciseVariant(
         id: _uuid.v4(),
         programExerciseId: programExerciseId,
         exerciseId: exercise.id,
-        position: maxPos + 1,
+        position: await _nextPosition(txn, 'program_exercise_variants',
+            'program_exercise_id', programExerciseId),
         defaultWeightKg: defaultWeightKg,
         weightStepKg: weightStepKg,
         targetSets: targetSets,
@@ -663,9 +682,22 @@ class ProgramDao {
         where: 'id = ?', whereArgs: [v.id]);
   }
 
+  /// Delete a variant; the slot's remaining variants are renumbered 0..n-1
+  /// in the same transaction.
   Future<void> deleteVariant(String id) async {
-    await _db.delete('program_exercise_variants',
-        where: 'id = ?', whereArgs: [id]);
+    await _db.transaction((txn) async {
+      final row = await txn.query('program_exercise_variants',
+          columns: ['program_exercise_id'],
+          where: 'id = ?',
+          whereArgs: [id],
+          limit: 1);
+      await txn.delete('program_exercise_variants',
+          where: 'id = ?', whereArgs: [id]);
+      if (row.isNotEmpty) {
+        await _renumber(txn, 'program_exercise_variants', 'program_exercise_id',
+            row.first['program_exercise_id'] as String);
+      }
+    });
   }
 
   Future<void> _checkVariant(
@@ -728,4 +760,74 @@ class ProgramDao {
         variant: ProgramExerciseVariant.fromRow(r),
         exerciseName: r['exercise_name'] as String,
       );
+
+  // ---------- Positions ----------
+
+  /// Sibling order. `rowid` breaks ties so rows that share a position (data
+  /// written by builds that numbered new rows with COUNT, which collided after
+  /// a delete) still read in a stable, insertion order.
+  static const _byPosition = 'position ASC, rowid ASC';
+
+  /// Position for a new row appended to the siblings under [parentId]:
+  /// MAX + 1, never COUNT — a gap or a duplicate makes COUNT land on, or
+  /// before, an existing row.
+  static Future<int> _nextPosition(
+    DatabaseExecutor txn,
+    String table,
+    String parentColumn,
+    String parentId,
+  ) async {
+    return Sqflite.firstIntValue(await txn.rawQuery(
+          'SELECT COALESCE(MAX(position), -1) + 1 FROM $table '
+          'WHERE $parentColumn = ?',
+          [parentId],
+        )) ??
+        0;
+  }
+
+  /// Renumber the siblings under [parentId] to 0..n-1, keeping their order
+  /// ([_byPosition]); rows already in place are not written. Returns the old
+  /// positions in that order — index i held old position `result[i]`.
+  static Future<List<int>> _renumber(
+    DatabaseExecutor txn,
+    String table,
+    String parentColumn,
+    String parentId,
+  ) async {
+    final rows = await txn.query(table,
+        columns: ['id', 'position'],
+        where: '$parentColumn = ?',
+        whereArgs: [parentId],
+        orderBy: _byPosition);
+    final old = <int>[];
+    for (final (i, r) in rows.indexed) {
+      final pos = (r['position'] as num).toInt();
+      old.add(pos);
+      if (pos == i) continue;
+      await txn.update(table, {'position': i},
+          where: 'id = ?', whereArgs: [r['id']]);
+    }
+    return old;
+  }
+}
+
+/// Map a session queue key [pos] — placed relative to the template slots'
+/// integer positions [oldPositions] (ascending; the slot now at index i had
+/// `oldPositions[i]`) — onto the renumbered positions 0..n-1, keeping its
+/// place between the same neighbours. Monotonic, so the queue's order is
+/// unchanged. With no slots left the key is returned as is.
+double remapOrderPos(double pos, List<int> oldPositions) {
+  if (oldPositions.isEmpty) return pos;
+  final first = oldPositions.first;
+  final last = oldPositions.last;
+  if (pos <= first) return pos - first;
+  if (pos >= last) return oldPositions.length - 1 + (pos - last);
+  // first < pos < last: find the neighbours a <= pos < b.
+  var k = 0;
+  while (oldPositions[k + 1] <= pos) {
+    k++;
+  }
+  final a = oldPositions[k];
+  final b = oldPositions[k + 1];
+  return k + (pos - a) / (b - a);
 }
