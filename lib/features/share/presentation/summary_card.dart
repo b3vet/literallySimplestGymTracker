@@ -352,6 +352,17 @@ class _ExerciseRow extends StatelessWidget {
               ),
             ),
           ),
+        ] else if (line.isFirstExposure) ...[
+          // H4 / DEC-0007 #10: a first exposure is no record — the same quiet
+          // accent label as the summary card, no PR box.
+          const SizedBox(width: 18),
+          Text(
+            'FIRST TIME',
+            style: LsType.monoMeta.copyWith(
+              color: accent.accent,
+              fontSize: 26,
+            ),
+          ),
         ],
       ],
     );

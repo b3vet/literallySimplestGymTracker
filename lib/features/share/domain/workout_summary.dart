@@ -10,12 +10,17 @@ class TopSetLine {
     required this.reps,
     required this.weightKg,
     required this.isPr,
+    this.isFirstExposure = false,
   });
 
   final String exercise;
   final int reps;
   final double weightKg;
   final bool isPr;
+
+  /// The exercise's first-ever session: no PR, the line reads FIRST TIME
+  /// (H4, DEC-0007 #10). Never true together with [isPr].
+  final bool isFirstExposure;
 }
 
 /// A headless, testable snapshot of a single completed workout — everything the
@@ -62,7 +67,8 @@ class WorkoutSummary {
   /// - [exerciseNames] maps exerciseId → display name (falls back to a generic
   ///   label when absent).
   /// - [prs] is the per-exercise PR map (e.g. from [PrDetector.detect]); an
-  ///   exercise counts as a PR when its entry [ExercisePR.isPr] is true.
+  ///   exercise counts as a PR when its entry [ExercisePR.countsAsPr] is true;
+  ///   a first exposure ([ExercisePR.isFirstExposure]) is FIRST TIME instead.
   /// - Tonnage = Σ(weightKg × reps). Top set per exercise = heaviest weight,
   ///   ties broken by the most reps at that weight.
   /// - Exercise/line order follows the order each exercise was first logged.
@@ -105,13 +111,14 @@ class WorkoutSummary {
           topReps = s.reps;
         }
       }
-      final isPr = prs[id]?.isPr ?? false;
+      final isPr = prs[id]?.countsAsPr ?? false;
       if (isPr) prCount += 1;
       lines.add(TopSetLine(
         exercise: exerciseNames[id] ?? 'Exercise',
         reps: topReps,
         weightKg: topWeight,
         isPr: isPr,
+        isFirstExposure: prs[id]?.isFirstExposure ?? false,
       ));
     }
 

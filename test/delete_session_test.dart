@@ -1,35 +1,12 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ls_workout_tracker/core/db/migrations.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/application/pr_detector.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-Future<Database> _openInMemory() async {
-  return databaseFactoryFfi.openDatabase(
-    inMemoryDatabasePath,
-    options: OpenDatabaseOptions(
-      version: 6,
-      // Cascade deletes only fire with foreign keys ON — the app sets this in
-      // `onConfigure` too, and the delete below depends on it.
-      onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, _) async {
-        final b = db.batch();
-        for (final stmt in [
-          ...schemaV1,
-          ...schemaV2Up,
-          ...schemaV3Up,
-          ...schemaV4Up,
-          ...schemaV5Up,
-          ...schemaV6Up,
-        ]) {
-          b.execute(stmt);
-        }
-        await b.commit(noResult: true);
-      },
-    ),
-  );
-}
+import 'support/test_db.dart';
+
+Future<Database> _openInMemory() => openTestDb();
 
 void main() {
   setUpAll(sqfliteFfiInit);

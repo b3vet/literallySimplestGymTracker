@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
@@ -11,7 +12,10 @@ import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program_exercise.dart';
+import '../domain/program_exercise_variant.dart';
 import 'exercise_edit_sheet.dart';
+import 'program_delete.dart';
+import 'variants_sheet.dart';
 
 class DayEditorScreen extends ConsumerStatefulWidget {
   const DayEditorScreen({
@@ -47,35 +51,34 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
 
     return LsScreen(
       topGap: LsGap.loose,
-      topbar: LsTopbar(title: dayName),
+      topbar: LsTopbar(
+        title: dayName,
+        trailing: LsIconSquare(
+          icon: Icons.copy_all,
+          semanticLabel: 'Duplicate day',
+          onTap: () => _duplicate(context),
+        ),
+      ),
       footer: LsFabPair(
         leftLabel: _editing ? 'DONE' : 'EDIT',
         leftIcon: _editing ? Icons.check : Icons.edit_outlined,
         rightLabel: '+ EXERCISE',
-        onLeft: () async {
-          if (_editing) {
-            setState(() => _editing = false);
-            return;
-          }
-          final d = day.value;
-          if (d == null) return;
-          final name = await promptName(
-            context,
-            title: 'RENAME DAY',
-            initial: d.name,
-          );
-          if (name == null || name.isEmpty) return;
-          await ref.read(programDaoProvider).renameDay(d.id, name);
-          ref.invalidate(dayProvider(widget.dayId));
-          ref.invalidate(programDaysProvider(widget.programId));
-        },
+        // EDIT mode (SOW-15): delete buttons on the exercise rows, DELETE
+        // DAY, and the rename that EDIT used to open directly.
+        onLeft: () => setState(() => _editing = !_editing),
         onRight: () => _addExercise(context),
       ),
       child: exercises.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (list) => list.isEmpty
-            ? _EmptyExercises(text2: t.surface.text2)
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _EmptyExercises(text2: t.surface.text2)),
+                  if (_editing) _editFooter(context, dayName),
+                ],
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -93,6 +96,8 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
                       padding: EdgeInsets.zero,
                       buildDefaultDragHandles: false,
                       itemCount: list.length,
+                      footer:
+                          _editing ? _editFooter(context, dayName) : null,
                       proxyDecorator: (child, _, _) =>
                           Material(color: Colors.transparent, child: child),
                       onReorder: (oldIdx, newIdx) async {
@@ -118,13 +123,6 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
                             view: v,
                             editing: _editing,
                             onTap: () => _editExercise(context, v),
-                            onDelete: () async {
-                              await ref
-                                  .read(programDaoProvider)
-                                  .deleteProgramExercise(v.pe.id);
-                              ref.invalidate(
-                                  dayExercisesProvider(widget.dayId));
-                            },
                           ),
                         );
                       },
@@ -134,6 +132,91 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
               ),
       ),
     );
+  }
+
+  /// EDIT mode, after the last exercise: rename the day, or delete it.
+  Widget _editFooter(BuildContext context, String dayName) => Padding(
+        padding: const EdgeInsets.only(top: LsGap.sub, bottom: LsGap.sub),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            LsButton(
+              label: 'RENAME DAY',
+              icon: Icons.edit_outlined,
+              variant: LsButtonVariant.ghost,
+              expand: true,
+              onPressed: () => _rename(context),
+            ),
+            const SizedBox(height: LsGap.tight),
+            LsButton(
+              label: 'DELETE DAY',
+              icon: Icons.delete_outline,
+              variant: LsButtonVariant.danger,
+              expand: true,
+              onPressed: () => _deleteDay(context, dayName),
+            ),
+          ],
+        ),
+      );
+
+  Future<void> _rename(BuildContext context) async {
+    final d = ref.read(dayProvider(widget.dayId)).value;
+    if (d == null) return;
+    final name = await promptName(
+      context,
+      title: 'RENAME DAY',
+      initial: d.name,
+    );
+    if (name == null || name.isEmpty) return;
+    await ref.read(programDaoProvider).renameDay(d.id, name);
+    ref.invalidate(dayProvider(widget.dayId));
+    ref.invalidate(programDaysProvider(widget.programId));
+  }
+
+  /// SOW-15: same confirm as the program editor's day row (with the
+  /// workout-in-progress warning), then back to the program editor.
+  Future<void> _deleteDay(BuildContext context, String dayName) async {
+    final router = GoRouter.of(context);
+    await deleteDayFlow(
+      context,
+      ref,
+      programId: widget.programId,
+      dayId: widget.dayId,
+      label: dayName,
+      onConfirmed: () {
+        if (router.canPop()) {
+          router.pop();
+        } else {
+          router.go('/programs/${widget.programId}');
+        }
+      },
+    );
+  }
+
+  /// SOW-13: copy this day (slots, targets) into the same program, appended
+  /// last, then replace this editor with the copy's.
+  Future<void> _duplicate(BuildContext context) async {
+    final d = ref.read(dayProvider(widget.dayId)).value;
+    if (d == null) return;
+    final name = await promptName(
+      context,
+      title: 'DUPLICATE DAY',
+      initial: '${d.name} COPY',
+    );
+    if (name == null || name.isEmpty) return;
+    final copy =
+        await ref.read(programDaoProvider).duplicateDay(d.id, name: name);
+    ref.invalidate(programDaysProvider(widget.programId));
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    context.pushReplacement('/programs/${widget.programId}/days/${copy.id}');
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          "Copied. Changes here don't touch ${d.name.toUpperCase()}.",
+        ),
+      ));
   }
 
   Future<void> _addExercise(BuildContext context) async {
@@ -149,17 +232,30 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       initialWeightStepKg: null,
     );
     if (result == null) return;
-    await ref.read(programDaoProvider).addProgramExercise(
-          programDayId: widget.dayId,
-          exerciseName: result.name,
-          targetSets: result.sets,
-          targetRepsMin: result.repsMin,
-          targetRepsMax: result.repsMax,
-          defaultWeightKg: result.weightKg,
-          weightStepKg: result.weightStepKg,
-          dropCount: result.dropCount,
-        );
+    try {
+      await ref.read(programDaoProvider).addProgramExercise(
+            programDayId: widget.dayId,
+            exerciseName: result.name,
+            targetSets: result.sets,
+            targetRepsMin: result.repsMin,
+            targetRepsMax: result.repsMax,
+            defaultWeightKg: result.weightKg,
+            weightStepKg: result.weightStepKg,
+            dropCount: result.dropCount,
+          );
+    } on VariantConflict catch (e) {
+      if (context.mounted) _showConflict(context, e);
+      return;
+    }
     ref.invalidate(dayExercisesProvider(widget.dayId));
+  }
+
+  /// SOW-14 day rule: the sheet has closed, so the refusal goes in a snackbar
+  /// on this screen.
+  void _showConflict(BuildContext context, VariantConflict e) {
+    ScaffoldMessenger.of(context)
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(content: Text(e.message)));
   }
 
   Future<void> _editExercise(
@@ -167,6 +263,10 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
     ProgramExerciseView v,
   ) async {
     final unit = ref.read(settingsProvider).unit ?? WeightUnit.kg;
+    final variants = await ref
+        .read(programDaoProvider)
+        .listVariants(v.pe.id);
+    if (!context.mounted) return;
     final result = await showExerciseEditSheet(
       context,
       unit: unit,
@@ -178,30 +278,58 @@ class _DayEditorScreenState extends ConsumerState<DayEditorScreen> {
       initialWeightStepKg: v.pe.weightStepKg,
       initialDropCount: v.pe.dropCount,
       canDelete: true,
+      variantCount: variants.length,
     );
     if (result == null) return;
     if (result.delete) {
-      await ref.read(programDaoProvider).deleteProgramExercise(v.pe.id);
+      // SOW-15: the same guarded confirm → delete as the row's button and the
+      // swipe (variants, History, and the workout in progress).
+      if (!context.mounted) return;
+      await deleteExerciseFlow(
+        context,
+        ref,
+        programExerciseId: v.pe.id,
+        dayId: widget.dayId,
+        label: v.exerciseName,
+      );
+      return;
     } else {
       final ex = await ref
           .read(programDaoProvider)
           .findOrCreateExercise(result.name);
-      await ref.read(programDaoProvider).updateProgramExercise(
-            ProgramExercise(
-              id: v.pe.id,
-              programDayId: v.pe.programDayId,
-              exerciseId: ex.id,
-              position: v.pe.position,
-              targetSets: result.sets,
-              targetRepsMin: result.repsMin,
-              targetRepsMax: result.repsMax,
-              defaultWeightKg: result.weightKg,
-              weightStepKg: result.weightStepKg,
-              dropCount: result.dropCount,
-            ),
-          );
+      try {
+        await ref.read(programDaoProvider).updateProgramExercise(
+              ProgramExercise(
+                id: v.pe.id,
+                programDayId: v.pe.programDayId,
+                exerciseId: ex.id,
+                position: v.pe.position,
+                targetSets: result.sets,
+                targetRepsMin: result.repsMin,
+                targetRepsMax: result.repsMax,
+                defaultWeightKg: result.weightKg,
+                weightStepKg: result.weightStepKg,
+                dropCount: result.dropCount,
+              ),
+            );
+      } on VariantConflict catch (e) {
+        if (context.mounted) _showConflict(context, e);
+        return;
+      }
     }
     ref.invalidate(dayExercisesProvider(widget.dayId));
+    ref.invalidate(dayVariantsProvider(widget.dayId));
+    ref.invalidate(programExerciseProvider(v.pe.id));
+    // VARIANTS row: the slot's edits are saved above, then the variants sheet
+    // opens on the (possibly renamed) base.
+    if (result.manageVariants && !result.delete && context.mounted) {
+      await showVariantsSheet(
+        context,
+        programExerciseId: v.pe.id,
+        baseName: result.name.trim(),
+      );
+      ref.invalidate(dayVariantsProvider(widget.dayId));
+    }
   }
 }
 
@@ -211,13 +339,11 @@ class _ExerciseTile extends ConsumerWidget {
     required this.view,
     required this.editing,
     required this.onTap,
-    required this.onDelete,
   });
   final int index;
   final ProgramExerciseView view;
   final bool editing;
   final VoidCallback onTap;
-  final Future<void> Function() onDelete;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
@@ -228,6 +354,11 @@ class _ExerciseTile extends ConsumerWidget {
         ? '${pe.targetRepsMin}'
         : '${pe.targetRepsMin}-${pe.targetRepsMax}';
     final weightValue = _weightValue(pe.defaultWeightKg, unit);
+    final variantCount = ref
+            .watch(dayVariantsProvider(pe.programDayId))
+            .value?[pe.id]
+            ?.length ??
+        0;
 
     final card = LsCard(
       onTap: editing ? null : onTap,
@@ -264,24 +395,47 @@ class _ExerciseTile extends ConsumerWidget {
                     MetaPill(value: weightValue, text: unit.short),
                     if (pe.dropCount > 0)
                       MetaPill(value: '×${pe.dropCount}', text: 'DROP'),
+                    if (variantCount > 0)
+                      MetaPill(value: '+$variantCount', text: 'VAR'),
                   ],
                 ),
               ],
             ),
           ),
-          if (!editing)
+          if (editing)
+            DeleteRowButton(
+              name: view.exerciseName,
+              onPressed: () => deleteExerciseFlow(
+                context,
+                ref,
+                programExerciseId: pe.id,
+                dayId: pe.programDayId,
+                label: view.exerciseName,
+              ),
+            )
+          else
             Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
         ],
       ),
     );
 
+    // The swipe, the row's delete button and the edit sheet's DELETE all run
+    // the same confirm → delete (program_delete.dart).
     return Dismissible(
       key: ValueKey('dismiss-${pe.id}'),
       direction: editing ? DismissDirection.endToStart : DismissDirection.none,
       background: dismissBackground(),
-      confirmDismiss: (_) async =>
-          await confirmDelete(context, view.exerciseName) ?? false,
-      onDismissed: (_) async => onDelete(),
+      confirmDismiss: (_) => confirmExerciseDelete(
+        context,
+        ref,
+        label: view.exerciseName,
+        programExerciseId: pe.id,
+      ),
+      onDismissed: (_) => deleteExerciseConfirmed(
+        ProviderScope.containerOf(context, listen: false),
+        programExerciseId: pe.id,
+        dayId: pe.programDayId,
+      ),
       child: card,
     );
   }

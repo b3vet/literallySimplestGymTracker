@@ -6,6 +6,7 @@ const _tablesInDeleteOrder = <String>[
   'workout_sets',
   'session_exercise_overrides',
   'workout_sessions',
+  'program_exercise_variants',
   'program_exercises',
   'program_days',
   'programs',

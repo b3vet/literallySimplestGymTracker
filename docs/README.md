@@ -18,7 +18,7 @@ This folder is the **single source of truth** for LS Gym Track's strategy, roadm
 | [00-competitive-analysis.md](00-competitive-analysis.md) | Condensed competitor landscape + gap analysis |
 | [02-roadmap.md](02-roadmap.md) | Phased roadmap + **live progress board** |
 | [sow/SOW-00-template.md](sow/SOW-00-template.md) | The SOW format every feature doc follows |
-| [sow/](sow/) | SOW-01 … SOW-10 — implementable feature specs |
+| [sow/](sow/) | SOW-01 … SOW-14 — implementable feature specs |
 
 ## The non-negotiables (read before building anything)
 1. **Free core forever.** Unlimited logging + data export are never gated. This is the acquisition gate Hevy reset to zero; gating it is predicted death.
@@ -29,4 +29,4 @@ This folder is the **single source of truth** for LS Gym Track's strategy, roadm
 
 ## Provenance
 - Source: competitive & market analysis of 15 rivals, June 2026 — full report at [competitive-analysis-full-report.md](competitive-analysis-full-report.md).
-- Codebase facts in the SOWs were verified against the live repo (DB schema v6, Riverpod tri-layer features, watch app schema v3).
+- Codebase facts in the SOWs were verified against the live repo (DB schema v6 at the time; v7 since 1.5.0 / SOW-14; Riverpod tri-layer features, watch app schema v3).

@@ -1,15 +1,27 @@
 import 'package:flutter/material.dart';
 
+import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/theme/spec.dart';
+import '../../../core/util/weight.dart';
 import '../../../core/widgets/layout.dart';
 import '../domain/active_session.dart';
+import '../domain/workout_set.dart';
 
 /// The action a user picked from the in-workout exercise-options sheet. The
 /// sheet itself is pure UI — it returns the choice and the caller
 /// (`SwapExerciseButton`) orchestrates the follow-up (open the edit sheet,
 /// add/remove a set, confirm + skip).
-enum ExerciseOption { changeExercise, addSet, removeSet, insertExercise, skip }
+enum ExerciseOption {
+  changeExercise,
+
+  /// SOW-14: only offered when the slot has variants (base + variants).
+  switchVariant,
+  addSet,
+  removeSet,
+  insertExercise,
+  skip,
+}
 
 /// Bottom sheet opened from the active-workout header's leading button. Branches
 /// the single current exercise into a menu of mutations. Matches the app's
@@ -19,6 +31,8 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
   required PlannedExercise exercise,
   required bool canAddSet,
   required bool canRemoveSet,
+  bool canSwitchVariant = true,
+  bool slotDone = true,
 }) {
   return showModalBottomSheet<ExerciseOption>(
     context: context,
@@ -29,6 +43,8 @@ Future<ExerciseOption?> showExerciseOptionsSheet(
         exercise: exercise,
         canAddSet: canAddSet,
         canRemoveSet: canRemoveSet,
+        canSwitchVariant: canSwitchVariant,
+        slotDone: slotDone,
       ),
     ),
   );
@@ -39,11 +55,22 @@ class _ExerciseOptionsSheet extends StatelessWidget {
     required this.exercise,
     required this.canAddSet,
     required this.canRemoveSet,
+    required this.canSwitchVariant,
+    required this.slotDone,
   });
 
   final PlannedExercise exercise;
   final bool canAddSet;
   final bool canRemoveSet;
+
+  /// False once the sets done meet every other member's own plan: there is
+  /// nothing left to switch to (SOW-14 §3 #6, the per-member rule; review
+  /// #2). The running member being complete alone doesn't disable it.
+  final bool canSwitchVariant;
+
+  /// When disabled, whether the running member's own sets are all logged too
+  /// (every plan met) — only the wording differs.
+  final bool slotDone;
 
   @override
   Widget build(BuildContext context) {
@@ -57,7 +84,10 @@ class _ExerciseOptionsSheet extends StatelessWidget {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        LsSheetHeader(eyebrow: 'EXERCISE OPTIONS', title: exercise.exerciseName),
+        LsSheetHeader(
+          eyebrow: 'EXERCISE OPTIONS',
+          title: exercise.exerciseName,
+        ),
         const SizedBox(height: LsGap.sub),
         Text(
           'NOW $n ${n == 1 ? 'SET' : 'SETS'} · $reps REPS',
@@ -70,6 +100,23 @@ class _ExerciseOptionsSheet extends StatelessWidget {
           subtitle: 'Swap movement or edit targets',
           onTap: () => Navigator.pop(context, ExerciseOption.changeExercise),
         ),
+        if (exercise.hasVariants && !exercise.skipped) ...[
+          const SizedBox(height: LsGap.sub),
+          _OptionRow(
+            icon: Icons.alt_route,
+            label: 'Switch variant',
+            subtitle: canSwitchVariant
+                ? 'Now: ${exercise.exerciseName}'
+                : slotDone
+                ? 'All sets done · no variant has sets left'
+                : 'No other variant has sets left',
+            // Wraps instead of losing the name (QA VAR-14).
+            subtitleMaxLines: 3,
+            onTap: canSwitchVariant
+                ? () => Navigator.pop(context, ExerciseOption.switchVariant)
+                : null,
+          ),
+        ],
         const SizedBox(height: LsGap.sub),
         _OptionRow(
           icon: Icons.add,
@@ -111,20 +158,135 @@ class _ExerciseOptionsSheet extends StatelessWidget {
   }
 }
 
+/// SOW-14: pick which member of the slot to run — its base or a variant. Lists
+/// base first, then the variants in program order, the current one marked;
+/// each row reads the member's own prescription (`4×6-8 · 40 KG`). A member
+/// under whose plan the slot is already complete is dimmed
+/// ([PlannedExercise.canSwitchTo]). Returns the chosen `exerciseId`, or null
+/// when dismissed or the current one was tapped. Same `LsSheet` + option-row
+/// language as the options menu.
+Future<String?> showVariantPickerSheet(
+  BuildContext context, {
+  required PlannedExercise exercise,
+  required WeightUnit unit,
+  List<WorkoutSet> logged = const [],
+}) {
+  return showModalBottomSheet<String>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    builder: (ctx) => LsSheet(
+      child: _VariantPickerSheet(
+        exercise: exercise,
+        unit: unit,
+        logged: logged,
+      ),
+    ),
+  );
+}
+
+class _VariantPickerSheet extends StatelessWidget {
+  const _VariantPickerSheet({
+    required this.exercise,
+    required this.unit,
+    required this.logged,
+  });
+  final PlannedExercise exercise;
+  final WeightUnit unit;
+  final List<WorkoutSet> logged;
+
+  String _subtitle(SlotVariant m, bool current, bool enabled) {
+    final p = exercise.prescriptionOf(m);
+    final reps = p.repsMin == p.repsMax
+        ? '${p.repsMin}'
+        : '${p.repsMin}-${p.repsMax}';
+    return [
+      '${p.sets}×$reps',
+      WeightConv.format(exercise.sessionWeightOf(m), unit),
+      if (p.drops > 0) 'drop ×${p.drops}',
+      if (m.isBase) 'base',
+      if (current) 'current',
+      if (!current && !enabled) 'plan already met',
+    ].join(' · ');
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    final members = exercise.members;
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        LsSheetHeader(
+          eyebrow: 'SWITCH VARIANT',
+          title: members.isEmpty ? exercise.exerciseName : members.first.name,
+        ),
+        const SizedBox(height: LsGap.sub),
+        Text(
+          'SETS DONE COUNT TOWARD EACH PLAN',
+          style: LsType.monoMeta.copyWith(color: t.surface.text2, fontSize: 14),
+        ),
+        const SizedBox(height: LsGap.loose),
+        Flexible(
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                for (var i = 0; i < members.length; i++) ...[
+                  if (i > 0) const SizedBox(height: LsGap.sub),
+                  Builder(builder: (context) {
+                    final m = members[i];
+                    final current = m.exerciseId == exercise.exerciseId;
+                    final enabled =
+                        current || exercise.canSwitchTo(m, logged);
+                    return _OptionRow(
+                      key: ValueKey('variant-row-${m.exerciseId}'),
+                      icon: m.isBase ? Icons.fitness_center : Icons.alt_route,
+                      label: m.name,
+                      subtitle: _subtitle(m, current, enabled),
+                      subtitleMaxLines: 2,
+                      selected: current,
+                      onTap: !enabled
+                          ? null
+                          : () => Navigator.pop(
+                                context,
+                                current ? null : m.exerciseId,
+                              ),
+                    );
+                  }),
+                ],
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: LsGap.tight),
+      ],
+    );
+  }
+}
+
 class _OptionRow extends StatelessWidget {
   const _OptionRow({
+    super.key,
     required this.icon,
     required this.label,
     required this.subtitle,
     required this.onTap,
     this.danger = false,
+    this.selected = false,
+    this.subtitleMaxLines = 1,
   });
 
   final IconData icon;
   final String label;
   final String subtitle;
+  final int subtitleMaxLines;
   final VoidCallback? onTap;
   final bool danger;
+
+  /// Marks the current choice (variant picker): accent border + check.
+  final bool selected;
 
   @override
   Widget build(BuildContext context) {
@@ -134,56 +296,70 @@ class _OptionRow extends StatelessWidget {
     final iconBg = danger
         ? LsSignals.danger.withValues(alpha: 0.12)
         : t.accent.accentDim;
-    return Opacity(
-      opacity: enabled ? 1 : 0.4,
-      child: Material(
-        color: t.surface.surface2,
-        borderRadius: BorderRadius.circular(LsRadius.r3),
-        child: InkWell(
+    return Semantics(
+      selected: selected,
+      child: Opacity(
+        opacity: enabled ? 1 : 0.4,
+        child: Material(
+          color: t.surface.surface2,
           borderRadius: BorderRadius.circular(LsRadius.r3),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(LsRadius.r3),
-              border: Border.all(color: t.surface.border),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: iconBg,
-                    borderRadius: BorderRadius.circular(LsRadius.r2),
-                  ),
-                  child: Icon(icon, size: 20, color: tint),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            onTap: onTap,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(LsRadius.r3),
+                border: Border.all(
+                  color: selected ? t.accent.accent : t.surface.border,
+                  width: selected ? 1.4 : 1,
                 ),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        label.toUpperCase(),
-                        style: LsType.displayS.copyWith(
-                          color: danger ? LsSignals.danger : t.surface.text,
-                          fontSize: 20,
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: iconBg,
+                      borderRadius: BorderRadius.circular(LsRadius.r2),
+                    ),
+                    child: Icon(icon, size: 20, color: tint),
+                  ),
+                  const SizedBox(width: 14),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          label.toUpperCase(),
+                          style: LsType.displayS.copyWith(
+                            color: danger ? LsSignals.danger : t.surface.text,
+                            fontSize: 20,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        subtitle.toUpperCase(),
-                        style: LsType.monoMeta.copyWith(color: t.surface.text2),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
+                        const SizedBox(height: 4),
+                        Text(
+                          subtitle.toUpperCase(),
+                          style: LsType.monoMeta.copyWith(
+                            color: t.surface.text2,
+                          ),
+                          maxLines: subtitleMaxLines,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                Icon(Icons.chevron_right, size: 20, color: t.surface.text3),
-              ],
+                  selected
+                      ? Icon(Icons.check, size: 20, color: t.accent.accent)
+                      : Icon(
+                          Icons.chevron_right,
+                          size: 20,
+                          color: t.surface.text3,
+                        ),
+                ],
+              ),
             ),
           ),
         ),

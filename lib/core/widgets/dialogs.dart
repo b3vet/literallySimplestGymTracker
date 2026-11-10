@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_theme.dart';
@@ -87,16 +89,48 @@ Future<String?> promptName(
   );
 }
 
-Future<bool?> confirmDelete(BuildContext context, String label) =>
+/// [details] are extra lines under the standard one that spell out what goes
+/// with it (SOW-15: "2 exercises will be removed."). [warning], when given, is
+/// a red paragraph after them — e.g. that the workout in progress will end.
+/// [message] replaces the standard first line ("…and everything inside it"),
+/// for things that have nothing inside them, e.g. an exercise.
+Future<bool?> confirmDelete(
+  BuildContext context,
+  String label, {
+  String? message,
+  List<String> details = const [],
+  String? warning,
+}) =>
     showDialog(
       context: context,
       builder: (ctx) {
         final t = LsTheme.of(ctx);
         return AlertDialog(
           title: const Text('DELETE?'),
-          content: Text(
-            'This will delete "$label" and everything inside it.',
-            style: LsType.bodyM.copyWith(color: t.surface.text2),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                message ??
+                    'This will delete "$label" and everything inside it.',
+                style: LsType.bodyM.copyWith(color: t.surface.text2),
+              ),
+              for (final line in details) ...[
+                const SizedBox(height: 8),
+                Text(
+                  line,
+                  style: LsType.bodyM.copyWith(color: t.surface.text2),
+                ),
+              ],
+              if (warning != null) ...[
+                const SizedBox(height: 12),
+                Text(
+                  warning,
+                  style: LsType.bodyM.copyWith(color: LsSignals.danger),
+                ),
+              ],
+            ],
           ),
           actions: [
             TextButton(
@@ -131,3 +165,63 @@ Widget dismissBackground() => Builder(
         child: const Icon(Icons.delete_outline, color: Colors.white),
       ),
     );
+
+/// SOW-15: the visible delete control on an editable row (EDIT mode), next to
+/// the swipe. Red, 44 × 44 tap target, read out as `Delete <name>` with a tap
+/// action (the `Semantics` excludes the InkWell's own node, so it re-declares
+/// `onTap` — D-0017 review #3). While the future [onPressed] returns is
+/// pending, further taps are ignored (review #4: two fast taps stacked two
+/// confirm dialogs).
+class DeleteRowButton extends StatefulWidget {
+  const DeleteRowButton({
+    super.key,
+    required this.name,
+    required this.onPressed,
+  });
+  final String name;
+  final FutureOr<void> Function() onPressed;
+
+  @override
+  State<DeleteRowButton> createState() => _DeleteRowButtonState();
+}
+
+class _DeleteRowButtonState extends State<DeleteRowButton> {
+  bool _busy = false;
+
+  Future<void> _tap() async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      await widget.onPressed();
+    } finally {
+      if (mounted) _busy = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      button: true,
+      label: 'Delete ${widget.name}',
+      excludeSemantics: true,
+      onTap: _tap,
+      child: Material(
+        type: MaterialType.transparency,
+        child: InkWell(
+          borderRadius: BorderRadius.circular(LsRadius.r3),
+          onTap: _tap,
+          child: const SizedBox(
+            width: 44,
+            height: 44,
+            child: Icon(
+              Icons.remove_circle_outline,
+              color: LsSignals.danger,
+              size: 24,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

@@ -11,6 +11,7 @@ import '../../../core/widgets/dialogs.dart';
 import '../../../core/widgets/layout.dart';
 import '../application/programs_provider.dart';
 import '../domain/program_day.dart';
+import 'program_delete.dart';
 
 class ProgramEditorScreen extends ConsumerStatefulWidget {
   const ProgramEditorScreen({super.key, required this.programId});
@@ -79,27 +80,23 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
 
     return LsScreen(
       topGap: LsGap.loose,
-      topbar: LsTopbar(title: programName),
+      topbar: LsTopbar(
+        title: programName,
+        trailing: LsIconSquare(
+          icon: Icons.copy_all,
+          semanticLabel: 'Duplicate program',
+          onTap: () => _duplicate(context),
+        ),
+      ),
       footer: LsFabPair(
         leftLabel: _editing ? 'DONE' : 'EDIT',
         leftIcon: _editing ? Icons.check : Icons.edit_outlined,
         rightLabel: '+ DAY',
-        onLeft: () async {
-          if (_editing) {
-            setState(() => _editing = false);
-            return;
-          }
-          final p = program.value;
-          if (p == null) return;
-          final name = await promptName(
-            context,
-            title: 'RENAME PROGRAM',
-            initial: p.name,
-          );
-          if (name == null || name.isEmpty) return;
-          await ref.read(programDaoProvider).renameProgram(p.id, name);
-          ref.invalidate(programProvider(widget.programId));
-          ref.invalidate(programsListProvider);
+        // EDIT mode (SOW-15): delete buttons on the day rows, and the rename
+        // that EDIT used to open directly.
+        onLeft: () {
+          _dismissCoach();
+          setState(() => _editing = !_editing);
         },
         onRight: () => _addDay(context),
       ),
@@ -123,14 +120,23 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
                     const Center(child: CircularProgressIndicator()),
         error: (e, _) => Center(child: Text('Failed to load: $e')),
         data: (list) => list.isEmpty
-            ? _EmptyDays(text2: t.surface.text2)
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Expanded(child: _EmptyDays(text2: t.surface.text2)),
+                  if (_editing) _renameButton(context),
+                ],
+              )
             : Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   // Content-area eyebrow → page content, not topbar.
                   Align(
                     alignment: Alignment.centerRight,
-                    child: EyebrowLabel('PROGRAM · ${list.length} DAYS'),
+                    child: EyebrowLabel(
+                      'PROGRAM · ${list.length} '
+                      '${list.length == 1 ? "DAY" : "DAYS"}',
+                    ),
                   ),
                   const SizedBox(height: LsGap.sub),
                   Expanded(
@@ -138,6 +144,7 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
                       padding: EdgeInsets.zero,
                       buildDefaultDragHandles: false,
                       itemCount: list.length,
+                      footer: _editing ? _renameButton(context) : null,
                       proxyDecorator: (child, _, _) =>
                           Material(color: Colors.transparent, child: child),
                       onReorder: (oldIdx, newIdx) async {
@@ -177,6 +184,59 @@ class _ProgramEditorScreenState extends ConsumerState<ProgramEditorScreen> {
           ],
         ),
     );
+  }
+
+  Widget _renameButton(BuildContext context) => Padding(
+        padding: const EdgeInsets.only(top: LsGap.sub, bottom: LsGap.sub),
+        child: LsButton(
+          label: 'RENAME PROGRAM',
+          icon: Icons.edit_outlined,
+          variant: LsButtonVariant.ghost,
+          expand: true,
+          onPressed: () => _rename(context),
+        ),
+      );
+
+  Future<void> _rename(BuildContext context) async {
+    final p = ref.read(programProvider(widget.programId)).value;
+    if (p == null) return;
+    final name = await promptName(
+      context,
+      title: 'RENAME PROGRAM',
+      initial: p.name,
+    );
+    if (name == null || name.isEmpty) return;
+    await ref.read(programDaoProvider).renameProgram(p.id, name);
+    ref.invalidate(programProvider(widget.programId));
+    ref.invalidate(programsListProvider);
+  }
+
+  /// SOW-13: copy this program (days, slots, targets) under a new name, then
+  /// replace this editor with the copy's so the next edits land on the copy.
+  Future<void> _duplicate(BuildContext context) async {
+    _dismissCoach();
+    final p = ref.read(programProvider(widget.programId)).value;
+    if (p == null) return;
+    final name = await promptName(
+      context,
+      title: 'DUPLICATE PROGRAM',
+      initial: '${p.name} COPY',
+    );
+    if (name == null || name.isEmpty) return;
+    final copy = await ref
+        .read(programDaoProvider)
+        .duplicateProgram(p.id, name: name);
+    ref.invalidate(programsListProvider);
+    if (!context.mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    context.pushReplacement('/programs/${copy.id}');
+    messenger
+      ..clearSnackBars()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          "Copied. Changes here don't touch ${p.name.toUpperCase()}.",
+        ),
+      ));
   }
 
   Future<void> _addDay(BuildContext context) async {
@@ -251,22 +311,39 @@ class _DayTile extends ConsumerWidget {
               ],
             ),
           ),
-          if (!editing)
+          if (editing)
+            DeleteRowButton(
+              name: day.name,
+              onPressed: () => deleteDayFlow(
+                context,
+                ref,
+                programId: programId,
+                dayId: day.id,
+                label: day.name,
+              ),
+            )
+          else
             Icon(Icons.chevron_right, color: t.surface.text3, size: 22),
         ],
       ),
     );
 
+    // The swipe and the row's delete button run the same confirm → delete.
     return Dismissible(
       key: ValueKey('dismiss-${day.id}'),
       direction: editing ? DismissDirection.endToStart : DismissDirection.none,
       background: dismissBackground(),
-      confirmDismiss: (_) async =>
-          await confirmDelete(context, day.name) ?? false,
-      onDismissed: (_) async {
-        await ref.read(programDaoProvider).deleteDay(day.id);
-        ref.invalidate(programDaysProvider(programId));
-      },
+      confirmDismiss: (_) => confirmProgramDelete(
+        context,
+        ref,
+        label: day.name,
+        dayId: day.id,
+      ),
+      onDismissed: (_) => deleteDayConfirmed(
+        ProviderScope.containerOf(context, listen: false),
+        programId: programId,
+        dayId: day.id,
+      ),
       child: card,
     );
   }

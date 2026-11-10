@@ -28,6 +28,7 @@ Most rivals offer export but **not** a clean local import (they assume cloud acc
 Pick file → **validate + preview** ("This file has 142 sessions, 1,830 sets, 3 programs. 12 are already in your library." ) → confirm policy (merge / replace) → progress → result summary. Cancel at any point before commit is a no-op.
 
 ## 5. Data & schema changes
+- **Export v2 is required (noted 2026-11-08, SOW-14).** The v1 export carries only completed sessions + sets (`export_dao.dart`), never programs, so the "restore programs" promise above cannot be met from a v1 file. Define **export v2**, written and read in the same release (round-trip tested): `exercises[] {id, name}`; `programs[] → days[] → exercises[] {id, exercise_id, position, targets, default_weight, weight_step, drop_count, variants[] {id, exercise_id, position, default_weight, weight_step}}`; `sessions[]` stays byte-compatible with v1. The importer accepts v1 and v2. Insert order: exercises → programs → days → program_exercises → variants (SOW-14, DB v7) → sessions → sets; dedupe by id (variants by `(program_exercise_id, exercise_id)`).
 - Reuses SOW-02's `ExportBundle`/JSON shape as the import contract. May add an `import` settings flag or none. Likely **no new table**; writes via existing DAOs inside a single sqflite transaction. A DB migration is only needed if a provenance/`imported_at` column is wanted (decide at build).
 
 ## 6. Implementation plan (outline)

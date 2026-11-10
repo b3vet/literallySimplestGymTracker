@@ -1,41 +1,11 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ls_workout_tracker/core/db/migrations.dart';
 import 'package:ls_workout_tracker/features/programs/data/program_dao.dart';
 import 'package:ls_workout_tracker/features/workout/data/workout_dao.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
-Future<Database> _openInMemory() async {
-  final factory = databaseFactoryFfi;
-  return factory.openDatabase(
-    inMemoryDatabasePath,
-    options: OpenDatabaseOptions(
-      version: 6,
-      onConfigure: (db) async => db.execute('PRAGMA foreign_keys = ON'),
-      onCreate: (db, _) async {
-        final b = db.batch();
-        for (final stmt in schemaV1) {
-          b.execute(stmt);
-        }
-        for (final stmt in schemaV2Up) {
-          b.execute(stmt);
-        }
-        for (final stmt in schemaV3Up) {
-          b.execute(stmt);
-        }
-        for (final stmt in schemaV4Up) {
-          b.execute(stmt);
-        }
-        for (final stmt in schemaV5Up) {
-          b.execute(stmt);
-        }
-        for (final stmt in schemaV6Up) {
-          b.execute(stmt);
-        }
-        await b.commit(noResult: true);
-      },
-    ),
-  );
-}
+import 'support/test_db.dart';
+
+Future<Database> _openInMemory() => openTestDb();
 
 void main() {
   setUpAll(sqfliteFfiInit);

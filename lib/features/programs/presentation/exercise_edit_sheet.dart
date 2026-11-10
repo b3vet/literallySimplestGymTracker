@@ -25,6 +25,7 @@ class ExerciseEditResult {
     this.dropCount = 0,
     this.delete = false,
     this.revert = false,
+    this.manageVariants = false,
   });
   final String name;
   final int sets;
@@ -44,6 +45,11 @@ class ExerciseEditResult {
   /// meaningless in that case; the caller should look at `revert` first
   /// and drop the override server-side.
   final bool revert;
+
+  /// True when the user tapped the VARIANTS row (program mode only, SOW-14).
+  /// The other fields carry the sheet's current, validated values: the caller
+  /// saves them first, then opens the variants sheet.
+  final bool manageVariants;
 }
 
 Future<ExerciseEditResult?> showExerciseEditSheet(
@@ -58,6 +64,8 @@ Future<ExerciseEditResult?> showExerciseEditSheet(
   int initialDropCount = 0,
   bool canDelete = false,
   bool canRevert = false,
+  bool variantMode = false,
+  int? variantCount,
 }) {
   return showModalBottomSheet<ExerciseEditResult>(
     context: context,
@@ -98,6 +106,8 @@ Future<ExerciseEditResult?> showExerciseEditSheet(
               initialDropCount: initialDropCount,
               canDelete: canDelete,
               canRevert: canRevert,
+              variantMode: variantMode,
+              variantCount: variantCount,
             ),
           ),
         ),
@@ -118,6 +128,8 @@ class _ExerciseEditSheet extends ConsumerStatefulWidget {
     required this.initialDropCount,
     required this.canDelete,
     required this.canRevert,
+    required this.variantMode,
+    required this.variantCount,
   });
   final WeightUnit unit;
   final String initialName;
@@ -129,6 +141,17 @@ class _ExerciseEditSheet extends ConsumerStatefulWidget {
   final int initialDropCount;
   final bool canDelete;
   final bool canRevert;
+
+  /// SOW-14 variant add/edit. A variant is a full exercise prescription
+  /// (DEC-0007 #13): the same fields and validation as a program exercise.
+  /// Only the wording, the missing VARIANTS row and the name autofill differ
+  /// — picking a name autofills the weight alone, so the sets, reps and drops
+  /// prefilled from the variant (or its slot) stay.
+  final bool variantMode;
+
+  /// Non-null in the program editor's slot sheet: shows a `VARIANTS · N` row
+  /// that returns `manageVariants: true`. Ignored in [variantMode].
+  final int? variantCount;
 
   @override
   ConsumerState<_ExerciseEditSheet> createState() => _ExerciseEditSheetState();
@@ -244,6 +267,9 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
     final programDao = ref.read(programDaoProvider);
     final pe = await programDao.mostRecentProgramExerciseForName(name);
     if (pe == null) {
+      // A variant is often a movement that was only ever swapped in, never
+      // planned: fall back to its last logged weight.
+      if (widget.variantMode) await _autofillWeightFromHistory(name, norm);
       _lastAutofilledFor = norm;
       return;
     }
@@ -257,14 +283,16 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
 
     if (!mounted) return;
 
+    // A variant's prescription starts from its slot: autofill the weight only.
+    final fillPrescription = !widget.variantMode;
     setState(() {
-      if (!_userTouchedSets) {
+      if (fillPrescription && !_userTouchedSets) {
         _sets = pe.targetSets.clamp(_setsMin, _setsMax);
       }
-      if (!_userTouchedRepsMin) {
+      if (fillPrescription && !_userTouchedRepsMin) {
         _repsMinVal = pe.targetRepsMin.clamp(_repsMin, _repsMax);
       }
-      if (!_userTouchedRepsMax) {
+      if (fillPrescription && !_userTouchedRepsMax) {
         _repsMaxVal = pe.targetRepsMax.clamp(_repsMinVal, _repsMax);
       }
       if (!_userTouchedWeight) {
@@ -278,16 +306,38 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (!_userTouchedSets) _setsCtrl.jumpToItem(_sets - _setsMin);
-      if (!_userTouchedRepsMin) {
+      if (fillPrescription && !_userTouchedSets) {
+        _setsCtrl.jumpToItem(_sets - _setsMin);
+      }
+      if (fillPrescription && !_userTouchedRepsMin) {
         _repsMinCtrl.jumpToItem(_repsMinVal - _repsMin);
       }
-      if (!_userTouchedRepsMax) {
+      if (fillPrescription && !_userTouchedRepsMax) {
         _repsMaxCtrl.jumpToItem(_repsMaxVal - _repsMin);
       }
       if (!_userTouchedWeight) {
         _weightCtrl.jumpToItem((_weightDisplay / _weightStep).round());
       }
+    });
+  }
+
+  Future<void> _autofillWeightFromHistory(String name, String norm) async {
+    if (_userTouchedWeight) return;
+    final ex = await ref.read(programDaoProvider).findExerciseByName(name);
+    if (ex == null) return;
+    final last = await ref.read(workoutDaoProvider).lastSetForExercise(ex.id);
+    if (last == null || !mounted) return;
+    final unit = ref.read(settingsProvider).unit ?? WeightUnit.kg;
+    setState(() {
+      final raw = WeightConv.fromKg(last.weightKg, unit);
+      _weightDisplay = ((raw / _weightStep).round() * _weightStep).clamp(
+        0.0,
+        _weightRangeMax(unit),
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _userTouchedWeight) return;
+      _weightCtrl.jumpToItem((_weightDisplay / _weightStep).round());
     });
   }
 
@@ -348,7 +398,9 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
       children: [
         const SizedBox(height: LsGap.tight),
         EyebrowLabel(
-          widget.initialName.isEmpty ? 'ADD EXERCISE' : 'EDIT EXERCISE',
+          widget.variantMode
+              ? (widget.initialName.isEmpty ? 'ADD VARIANT' : 'EDIT VARIANT')
+              : (widget.initialName.isEmpty ? 'ADD EXERCISE' : 'EDIT EXERCISE'),
         ),
         const SizedBox(height: LsGap.sub),
         _NameField(
@@ -550,6 +602,13 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
                     expand: true,
                     minHeight: LsBox.cta,
                   ),
+                  if (widget.variantCount != null && !widget.variantMode) ...[
+                    const SizedBox(height: LsGap.sub),
+                    _VariantsRow(
+                      count: widget.variantCount!,
+                      onTap: () => _save(manageVariants: true),
+                    ),
+                  ],
                   if (widget.canDelete) ...[
                     const SizedBox(height: LsGap.sub),
                     TextButton(
@@ -625,7 +684,7 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
     return valueInUnit.toStringAsFixed(1);
   }
 
-  void _save() {
+  void _save({bool manageVariants = false}) {
     final name = _name.text.trim();
     if (name.isEmpty || _repsMaxVal < _repsMinVal) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -649,6 +708,63 @@ class _ExerciseEditSheetState extends ConsumerState<_ExerciseEditSheet> {
         weightKg: WeightConv.toKg(_weightDisplay, widget.unit),
         weightStepKg: stepKg,
         dropCount: _dropCount,
+        manageVariants: manageVariants,
+      ),
+    );
+  }
+}
+
+/// `VARIANTS · N ›` — the program editor's door into a slot's variants
+/// (SOW-14). Same card language as the in-workout options rows.
+class _VariantsRow extends StatelessWidget {
+  const _VariantsRow({required this.count, required this.onTap});
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final t = LsTheme.of(context);
+    return Semantics(
+      button: true,
+      label: 'Variants, $count',
+      child: ExcludeSemantics(
+        child: Material(
+          color: t.surface.surface2,
+          borderRadius: BorderRadius.circular(LsRadius.r3),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(LsRadius.r3),
+            onTap: onTap,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 52),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(LsRadius.r3),
+                border: Border.all(color: t.surface.border),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.alt_route, size: 20, color: t.accent.accent),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'VARIANTS · $count',
+                      style: LsType.displayS.copyWith(
+                        color: t.surface.text,
+                        fontSize: 20,
+                      ),
+                    ),
+                  ),
+                  Text(
+                    count == 0 ? 'ADD MACHINE, DB…' : 'EDIT',
+                    style: LsType.monoMeta.copyWith(color: t.surface.text2),
+                  ),
+                  const SizedBox(width: 6),
+                  Icon(Icons.chevron_right, size: 20, color: t.surface.text3),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
   }

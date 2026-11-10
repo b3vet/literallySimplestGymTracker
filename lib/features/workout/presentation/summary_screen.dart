@@ -11,6 +11,7 @@ import '../../../core/util/weight.dart';
 import '../../../core/widgets/brand.dart';
 import '../../../core/widgets/layout.dart';
 import '../../onboarding/presentation/onboarding_fx.dart' show reduceMotionOf;
+import '../../programs/domain/program_exercise_variant.dart';
 import '../../share/application/summary_text.dart' show summaryTonnageGrouped;
 import '../../share/domain/workout_summary.dart';
 import '../../share/presentation/share_summary_button.dart';
@@ -117,6 +118,33 @@ class _SummaryBodyState extends ConsumerState<_SummaryBody> {
   final _expanded = <String>{};
   bool _allExpanded = false;
 
+  /// The UNDO snackbar this summary showed, while it is on screen. It must not
+  /// outlive the summary: an UNDO tapped on the next workout's screen would
+  /// silently revert this session's program updates (QA observation, D-0011).
+  ScaffoldMessengerState? _snackMessenger;
+  bool _snackOpen = false;
+
+  void _trackSnack(
+    ScaffoldMessengerState messenger,
+    ScaffoldFeatureController<SnackBar, SnackBarClosedReason> controller,
+  ) {
+    _snackMessenger = messenger;
+    _snackOpen = true;
+    controller.closed.then((_) {
+      if (identical(_snackMessenger, messenger)) _snackOpen = false;
+    });
+  }
+
+  @override
+  void dispose() {
+    // Leaving the summary route: take its snackbar with it.
+    final messenger = _snackMessenger;
+    if (_snackOpen && messenger != null && messenger.mounted) {
+      messenger.hideCurrentSnackBar();
+    }
+    super.dispose();
+  }
+
   void _toggle(String exerciseId) {
     setState(() {
       if (!_expanded.remove(exerciseId)) _expanded.add(exerciseId);
@@ -139,9 +167,20 @@ class _SummaryBodyState extends ConsumerState<_SummaryBody> {
   Widget build(BuildContext context) {
     final d = widget.summary;
     final unit = widget.unit;
+    // The share card follows the History card's rule: a first exposure reads
+    // FIRST TIME (on the first-ever workout too — every lift is one there).
     final prs = <String, ExercisePR>{
       for (final e in d.exercises)
-        if (e.pr != null) e.exerciseId: e.pr!,
+        if (e.pr != null)
+          e.exerciseId: e.pr!
+        else if (e.isFirstExposure || d.isFirstEverSession)
+          e.exerciseId: ExercisePR(
+            exerciseId: e.exerciseId,
+            kind: PrKind.weight,
+            weightKg: e.topWeightKg,
+            reps: e.topReps,
+            isFirstExposure: true,
+          ),
     };
 
     // Headless snapshot for outbound share (text + branded card), built from
@@ -803,20 +842,18 @@ class _ProgramUpdatesBlock extends ConsumerWidget {
   Future<void> _batch(BuildContext context, WidgetRef ref,
       {required bool undo}) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
     final n = undo ? await ctrl.undoAll() : await ctrl.applyAll();
     if (n == 0) return;
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(undo
-            ? '$n program ${n == 1 ? 'update' : 'updates'} undone'
-            : '$n program ${n == 1 ? 'target' : 'targets'} updated'),
-        duration: const Duration(seconds: 5),
-        action: undo
-            ? null
-            : SnackBarAction(label: 'UNDO', onPressed: ctrl.undoAll),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: undo
+          ? '$n program ${n == 1 ? 'update' : 'updates'} undone'
+          : '$n program ${n == 1 ? 'target' : 'targets'} updated',
+      onUndo: undo ? null : ctrl.undoAll,
+    );
   }
 }
 
@@ -834,57 +871,78 @@ class _ProgramUpdateRow extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final u = update;
-    final isAdd = u.kind == ProgramUpdateKind.add;
-    final proposed =
-        WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
+    final isAdd = u.isAddKind;
+    final slot = (u.slotName ?? '').toUpperCase();
+    final targetWord =
+        u.kind == ProgramUpdateKind.raiseVariant ? 'VARIANT TARGET' : 'TARGET';
+    // Non-breaking spaces: a weight never splits between number and unit.
+    final spoken = WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
+    final proposed = _nb(spoken);
+    final dataStyle = LsType.monoData.copyWith(fontSize: 20);
 
+    // QA VAR-08: these lines WRAP rather than ellipsize — the old Row gave the
+    // new weight whatever width was left after the label and the old weight,
+    // which on a variant card was nothing ("40 → 42…", or "42.5 →" with the
+    // value gone). In a Wrap the "old → new" group drops below the label when
+    // it doesn't fit beside it, and itself wraps at the arrow if it must.
     final valueLine = isAdd
         ? Text(
-            '${u.targetSets} × ${u.targetRepsMax} @ $proposed',
-            style: LsType.monoData
-                .copyWith(color: t.surface.text, fontSize: 20),
+            u.kind == ProgramUpdateKind.addVariant
+                ? 'VARIANT OF $slot @ $proposed'
+                : '${u.targetSets} × ${u.targetRepsMax} @ $proposed',
+            style: dataStyle.copyWith(color: t.surface.text),
           )
-        : u.applied
-            ? Row(children: [
-                Text('TARGET  ',
-                    style:
-                        LsType.monoMeta.copyWith(color: t.surface.text2)),
-                Text(proposed,
-                    style: LsType.monoData
-                        .copyWith(color: t.surface.text, fontSize: 20)),
-              ])
-            : Row(children: [
-                Text('TARGET  ',
-                    style:
-                        LsType.monoMeta.copyWith(color: t.surface.text2)),
-                Text(
-                  WeightConv.format(u.currentTargetKg ?? 0, unit)
-                      .toUpperCase()
-                      .replaceAll(' ${unit.short.toUpperCase()}', ''),
-                  style: LsType.monoData
-                      .copyWith(color: t.surface.text3, fontSize: 20),
-                ),
-                Text(' → ',
-                    style: LsType.monoData
-                        .copyWith(color: t.surface.text3, fontSize: 20)),
-                Flexible(
-                  child: Text(proposed,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: LsType.monoData
-                          .copyWith(color: t.surface.text, fontSize: 20)),
-                ),
-              ]);
+        : Wrap(
+            spacing: 10,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              Text(targetWord,
+                  style: LsType.monoMeta.copyWith(color: t.surface.text2)),
+              u.applied
+                  ? Text(proposed,
+                      style: dataStyle.copyWith(color: t.surface.text))
+                  : Text.rich(
+                      TextSpan(children: [
+                        TextSpan(
+                          text: _nb(WeightConv.format(u.currentTargetKg ?? 0, unit)
+                              .toUpperCase()
+                              .replaceAll(' ${unit.short.toUpperCase()}', '')),
+                          style: dataStyle.copyWith(color: t.surface.text3),
+                        ),
+                        TextSpan(
+                          text: ' → ',
+                          style: dataStyle.copyWith(color: t.surface.text3),
+                        ),
+                        TextSpan(
+                          text: proposed,
+                          style: dataStyle.copyWith(color: t.surface.text),
+                        ),
+                      ]),
+                    ),
+            ],
+          );
 
-    final statusWord = u.applied ? (isAdd ? 'ADDED' : 'UPDATED') : null;
-    final tag = statusWord ?? (isAdd ? 'NOT IN PLAN' : null);
+    final statusWord = u.applied
+        ? (u.kind == ProgramUpdateKind.addVariant
+            ? 'SAVED'
+            : (isAdd ? 'ADDED' : 'UPDATED'))
+        : null;
+    final tag = statusWord ??
+        switch (u.kind) {
+          ProgramUpdateKind.add => 'NOT IN PLAN',
+          ProgramUpdateKind.addVariant => 'SWAPPED IN',
+          // The value line already reads VARIANT TARGET (QA VAR-08: the
+          // extra tag only took width from the name).
+          ProgramUpdateKind.raiseVariant => null,
+          ProgramUpdateKind.raise => null,
+        };
 
     return Semantics(
       container: true,
       button: !u.applied,
       label: u.applied
-          ? '${u.exerciseName} ${isAdd ? 'added to your program' : 'target updated to $proposed'}.'
-          : '${u.exerciseName}. ${isAdd ? 'Add to your program' : 'Raise target to $proposed'}.',
+          ? '${u.exerciseName} ${_appliedPhrase(u, spoken)}.'
+          : '${u.exerciseName}. ${_pendingPhrase(u, spoken)}.',
       child: ExcludeSemantics(
         child: Material(
           color: Colors.transparent,
@@ -908,21 +966,28 @@ class _ProgramUpdateRow extends ConsumerWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Row(
+                        // A Wrap, not a Row (QA VAR-08): the name gets the
+                        // full width and wraps; the tag sits
+                        // beside it when there's room and drops below when
+                        // there isn't, instead of squeezing the name to
+                        // "SHOULDER PRESS (…".
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 2,
+                          crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Flexible(
-                              child: Text(
-                                u.exerciseName.toUpperCase(),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: LsType.displayS.copyWith(
-                                    color: t.surface.text, fontSize: 23),
-                              ),
+                            Text(
+                              u.exerciseName.toUpperCase(),
+                              // Wraps (2 lines for "SHOULDER PRESS (MACHINE)",
+                              // 3 for a long name) before any ellipsis.
+                              maxLines: 3,
+                              overflow: TextOverflow.ellipsis,
+                              style: LsType.displayS.copyWith(
+                                  color: t.surface.text, fontSize: 23),
                             ),
-                            if (tag != null) ...[
-                              const SizedBox(width: 8),
-                              // Signal 3 of 3: a word, so the state survives
-                              // greyscale and colour-blindness.
+                            // Signal 3 of 3: a word, so the state survives
+                            // greyscale and colour-blindness.
+                            if (tag != null)
                               Text(
                                 tag,
                                 style: LsType.monoMeta.copyWith(
@@ -931,7 +996,6 @@ class _ProgramUpdateRow extends ConsumerWidget {
                                       : t.surface.text3,
                                 ),
                               ),
-                            ],
                           ],
                         ),
                         const SizedBox(height: LsGap.tight),
@@ -956,22 +1020,21 @@ class _ProgramUpdateRow extends ConsumerWidget {
 
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
-    await ctrl.applyOne(update.exerciseId);
+    final conflict = await ctrl.applyOne(update.exerciseId);
+    if (conflict != null) {
+      _showConflict(messenger, conflict);
+      return;
+    }
     final proposed =
         WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(update.kind == ProgramUpdateKind.add
-            ? '${update.exerciseName.toUpperCase()} added to your program'
-            : '${update.exerciseName.toUpperCase()} target → $proposed'),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => ctrl.undoOne(update.exerciseId),
-        ),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: _snackText(update, proposed, null),
+      onUndo: () => ctrl.undoOne(update.exerciseId),
+    );
   }
 }
 
@@ -1111,7 +1174,9 @@ class _LiftCard extends ConsumerWidget {
     return Semantics(
       container: true,
       button: true,
-      label: '${e.name}.${e.isPr ? ' Personal record.' : ''} '
+      label: '${e.name}.${e.isPr ? ' Personal record.' : ''}'
+          '${e.isFirstExposure ? ' First time.' : ''}'
+          '${e.isVariant ? ' Variant of ${e.variantOfName}.' : ''} '
           '$top, ${e.setCount} sets. ${delta.semantics}',
       hint: expanded ? 'Double tap to hide sets.' : 'Double tap to show sets.',
       child: ExcludeSemantics(
@@ -1152,7 +1217,10 @@ class _LiftCard extends ConsumerWidget {
                             Expanded(
                               child: Text(
                                 e.name.toUpperCase(),
-                                maxLines: 2,
+                                // Three lines: a long variant name next to its
+                                // PR chip ("SINGLE-ARM LANDMINE / SHOULDER
+                                // PRESS / (MACHINE)") stays whole (QA VAR-08).
+                                maxLines: 3,
                                 overflow: TextOverflow.ellipsis,
                                 style: LsType.displayM.copyWith(
                                     color: t.surface.text, fontSize: 26),
@@ -1161,6 +1229,11 @@ class _LiftCard extends ConsumerWidget {
                             if (e.isPr) ...[
                               const SizedBox(width: 8),
                               const _PrChip(),
+                            ] else if (e.isFirstExposure) ...[
+                              const SizedBox(width: 8),
+                              Text('FIRST TIME',
+                                  style: LsType.monoMeta
+                                      .copyWith(color: t.accent.accent)),
                             ] else if (!e.inPlan) ...[
                               const SizedBox(width: 8),
                               Text('NOT IN PLAN',
@@ -1169,6 +1242,17 @@ class _LiftCard extends ConsumerWidget {
                             ],
                           ],
                         ),
+                        if (e.isVariant) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            'VARIANT OF '
+                            '${(e.variantOfName ?? '').toUpperCase()}',
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: LsType.monoMeta
+                                .copyWith(color: t.surface.text3),
+                          ),
+                        ],
                         const SizedBox(height: 6),
                         // Wrap, not Row: at the widest combination (a 3-digit
                         // weight plus a long delta word) the three parts are
@@ -1213,7 +1297,9 @@ class _LiftCard extends ConsumerWidget {
 
   Widget _expandedBody(BuildContext context, WidgetRef ref, LsTheme t) {
     final e = exercise;
-    final pe = e.planPe;
+    // A variant's TARGET line: its own prescription (DEC-0007 #13), the
+    // slot's value for each field it inherits.
+    final pe = e.planPe ?? e.variantPlan;
     final update = ref
         .watch(programUpdatesProvider(sessionId))
         .value
@@ -1396,23 +1482,35 @@ class _InlineProgramAction extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final t = LsTheme.of(context);
     final u = update;
-    final isAdd = u.kind == ProgramUpdateKind.add;
-    final weight = WeightConv.format(u.proposedTargetKg, unit).toUpperCase();
-    final raiseLabel = (u.currentTargetKg ?? 0) < u.proposedTargetKg - 1e-6
-        ? 'RAISE TARGET → $weight'
-        : 'SET TARGET → $weight';
+    final isAdd = u.isAddKind;
+    final weight =
+        _nb(WeightConv.format(u.proposedTargetKg, unit).toUpperCase());
+    final raiseLabel = u.kind == ProgramUpdateKind.raiseVariant
+        ? 'VARIANT TARGET → $weight'
+        : (u.currentTargetKg ?? 0) < u.proposedTargetKg - 1e-6
+            ? 'RAISE TARGET → $weight'
+            : 'SET TARGET → $weight';
     final label = u.applied
-        ? (isAdd ? 'ADDED' : 'TARGET SET')
-        : (isAdd
-            ? 'ADD TO ${(dayName ?? 'DAY').toUpperCase()}'
-            : raiseLabel);
+        ? switch (u.kind) {
+            ProgramUpdateKind.add => 'ADDED',
+            ProgramUpdateKind.addVariant => 'SAVED AS VARIANT',
+            _ => 'TARGET SET',
+          }
+        : switch (u.kind) {
+            ProgramUpdateKind.add =>
+              'ADD TO ${(dayName ?? 'DAY').toUpperCase()}',
+            ProgramUpdateKind.addVariant =>
+              'SAVE AS VARIANT OF ${(u.slotName ?? '').toUpperCase()}',
+            _ => raiseLabel,
+          };
     final fg = u.applied ? t.accent.accentInk : t.accent.accent;
 
     return Semantics(
       button: !u.applied,
       label: u.applied
-          ? '${u.exerciseName} ${isAdd ? 'added to your program' : 'target set to $weight'}.'
-          : label,
+          ? '${u.exerciseName} ${_appliedPhrase(u, weight)}.'
+              .replaceAll('\u00A0', ' ')
+          : label.replaceAll('\u00A0', ' '),
       child: ExcludeSemantics(
         child: Material(
           color: Colors.transparent,
@@ -1439,8 +1537,10 @@ class _InlineProgramAction extends ConsumerWidget {
                   ),
                   const SizedBox(width: 8),
                   Flexible(
+                    // Two lines before an ellipsis: "VARIANT TARGET → 42.5 KG"
+                    // must keep its number (QA VAR-08).
                     child: Text(label,
-                        maxLines: 1,
+                        maxLines: 2,
                         overflow: TextOverflow.ellipsis,
                         style: LsType.monoMeta.copyWith(color: fg)),
                   ),
@@ -1455,22 +1555,20 @@ class _InlineProgramAction extends ConsumerWidget {
 
   Future<void> _apply(BuildContext context, WidgetRef ref) async {
     final messenger = ScaffoldMessenger.of(context);
+    final summary = context.findAncestorStateOfType<_SummaryBodyState>();
     final ctrl = ref.read(programUpdatesProvider(sessionId).notifier);
-    await ctrl.applyOne(update.exerciseId);
+    final conflict = await ctrl.applyOne(update.exerciseId);
+    if (conflict != null) {
+      _showConflict(messenger, conflict);
+      return;
+    }
     final weight = WeightConv.format(update.proposedTargetKg, unit).toUpperCase();
-    messenger
-      ..clearSnackBars()
-      ..showSnackBar(SnackBar(
-        content: Text(update.kind == ProgramUpdateKind.add
-            ? '${update.exerciseName.toUpperCase()} added to '
-                '${(dayName ?? 'day').toUpperCase()}'
-            : '${update.exerciseName.toUpperCase()} target → $weight'),
-        duration: const Duration(seconds: 5),
-        action: SnackBarAction(
-          label: 'UNDO',
-          onPressed: () => ctrl.undoOne(update.exerciseId),
-        ),
-      ));
+    _showUndoSnack(
+      summary,
+      messenger,
+      text: _snackText(update, weight, dayName),
+      onUndo: () => ctrl.undoOne(update.exerciseId),
+    );
   }
 }
 
@@ -1650,4 +1748,72 @@ String _formatDuration(Duration d) {
   final m = d.inMinutes.remainder(60);
   if (h > 0) return '${h}H ${m}M';
   return '${m}M';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  PROGRAM-UPDATE WORDING (shared by the card and the inline action)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Show an UNDO snackbar for the summary: a normal, finite one (`persist:
+/// false` — Flutter otherwise keeps any snackbar with an action on screen
+/// until it is tapped), tracked by the summary so leaving the route dismisses
+/// it. [summary] is looked up BEFORE the caller's awaits.
+void _showUndoSnack(
+  _SummaryBodyState? summary,
+  ScaffoldMessengerState messenger, {
+  required String text,
+  required VoidCallback? onUndo,
+}) {
+  messenger.clearSnackBars();
+  final controller = messenger.showSnackBar(SnackBar(
+    content: Text(text),
+    duration: const Duration(seconds: 5),
+    persist: false,
+    action: onUndo == null
+        ? null
+        : SnackBarAction(label: 'UNDO', onPressed: onUndo),
+  ));
+  if (summary != null && summary.mounted) {
+    summary._trackSnack(messenger, controller);
+  }
+}
+
+/// [s] with its spaces made non-breaking, so a weight like "42.5 KG" never
+/// wraps between the number and the unit.
+String _nb(String s) => s.replaceAll(' ', '\u00A0');
+
+/// SOW-14 day rule: the program refused the update (it stays pending).
+void _showConflict(ScaffoldMessengerState messenger, VariantConflict e) {
+  messenger
+    ..clearSnackBars()
+    ..showSnackBar(SnackBar(content: Text(e.message)));
+}
+
+String _appliedPhrase(ProgramUpdate u, String weight) => switch (u.kind) {
+      ProgramUpdateKind.add => 'added to your program',
+      ProgramUpdateKind.addVariant =>
+        'saved as a variant of ${u.slotName ?? 'its slot'}',
+      ProgramUpdateKind.raiseVariant => 'variant target set to $weight',
+      ProgramUpdateKind.raise => 'target set to $weight',
+    };
+
+String _pendingPhrase(ProgramUpdate u, String weight) => switch (u.kind) {
+      ProgramUpdateKind.add => 'Add to your program',
+      ProgramUpdateKind.addVariant =>
+        'Save as a variant of ${u.slotName ?? 'its slot'}',
+      ProgramUpdateKind.raiseVariant => 'Raise variant target to $weight',
+      ProgramUpdateKind.raise => 'Raise target to $weight',
+    };
+
+String _snackText(ProgramUpdate u, String weight, String? dayName) {
+  final name = u.exerciseName.toUpperCase();
+  return switch (u.kind) {
+    ProgramUpdateKind.add => dayName == null
+        ? '$name added to your program'
+        : '$name added to ${dayName.toUpperCase()}',
+    ProgramUpdateKind.addVariant =>
+      '$name saved as a variant of ${(u.slotName ?? '').toUpperCase()}',
+    ProgramUpdateKind.raiseVariant => '$name variant target → $weight',
+    ProgramUpdateKind.raise => '$name target → $weight',
+  };
 }

@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 
@@ -40,12 +42,15 @@ class WorkoutDao {
     return rows.isEmpty ? null : WorkoutSession.fromRow(rows.first);
   }
 
-  Future<void> completeSession(String id) async {
+  /// Mark a session completed. [endedAt] defaults to now; a session closed
+  /// after the fact (its program day was deleted mid-workout) passes its last
+  /// set's time so the duration stays honest.
+  Future<void> completeSession(String id, {DateTime? endedAt}) async {
     await _db.update(
       'workout_sessions',
       {
         'status': SessionStatus.completed.name,
-        'ended_at': DateTime.now().millisecondsSinceEpoch,
+        'ended_at': (endedAt ?? DateTime.now()).millisecondsSinceEpoch,
       },
       where: 'id = ?',
       whereArgs: [id],
@@ -304,6 +309,7 @@ extension WorkoutDaoOverrides on WorkoutDao {
     bool inserted = false,
     double? orderPos,
     int dropCount = 0,
+    List<String> ranExerciseIds = const [],
   }) async {
     // Look up the existing override (if any) so we can preserve its id and
     // rotate previous_exercise_id correctly. sqflite has no UPSERT helper,
@@ -314,6 +320,15 @@ extension WorkoutDaoOverrides on WorkoutDao {
       whereArgs: [sessionId, programExerciseId],
       limit: 1,
     );
+    // The exercises the slot ran only ever grow within a session: merge with
+    // what the row already holds, so no writer can drop one (D-0016 #1).
+    final ran = <String>[
+      if (existing.isNotEmpty)
+        ..._decodeIds(existing.first['ran_exercise_ids']),
+    ];
+    for (final id in ranExerciseIds) {
+      if (!ran.contains(id)) ran.add(id);
+    }
     final row = <String, Object?>{
       'session_id': sessionId,
       'program_exercise_id': programExerciseId,
@@ -328,6 +343,9 @@ extension WorkoutDaoOverrides on WorkoutDao {
       'inserted': inserted ? 1 : 0,
       'order_pos': orderPos,
       'drop_count': dropCount,
+      // Left out when there is nothing to record: the merge above means the
+      // row holds none either, and NULL is the column's default.
+      if (ran.isNotEmpty) 'ran_exercise_ids': jsonEncode(ran),
     };
     if (existing.isEmpty) {
       row['id'] = const Uuid().v4();
@@ -421,7 +439,20 @@ extension WorkoutDaoOverrides on WorkoutDao {
               inserted: ((r['inserted'] as num?)?.toInt() ?? 0) == 1,
               orderPos: (r['order_pos'] as num?)?.toDouble(),
               dropCount: (r['drop_count'] as num?)?.toInt() ?? 0,
+              ranExerciseIds: _decodeIds(r['ran_exercise_ids']),
             ))
         .toList();
+  }
+}
+
+/// `session_exercise_overrides.ran_exercise_ids` (a JSON array of ids, or
+/// NULL) → the ids; anything unreadable counts as none.
+List<String> _decodeIds(Object? raw) {
+  if (raw is! String || raw.isEmpty) return const [];
+  try {
+    final v = jsonDecode(raw);
+    return v is List ? [for (final x in v) if (x is String) x] : const [];
+  } on FormatException {
+    return const [];
   }
 }

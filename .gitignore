@@ -55,3 +55,6 @@ researchEnv
 
 # Local research workspace (source notes / scratch — not part of the app or release)
 /research/
+
+# simtest QA output (reports, screenshots) — local only
+.simtest/

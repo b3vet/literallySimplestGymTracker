@@ -503,6 +503,10 @@ class LsTheme extends InheritedWidget {
         textColor: s.text,
       ),
       iconTheme: IconThemeData(color: s.text, size: 20),
+      // The snackbar sits on the inverse surface (light in the dark theme);
+      // the default action colour (onPrimary, white) vanished on it there.
+      // The page ground reads on it in both themes.
+      snackBarTheme: SnackBarThemeData(actionTextColor: s.bg),
     );
   }
 }

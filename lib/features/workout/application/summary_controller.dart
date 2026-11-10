@@ -2,9 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../programs/application/programs_provider.dart';
 import '../../programs/domain/program_exercise.dart';
+import '../../programs/domain/program_exercise_variant.dart';
 import '../domain/active_session.dart';
+import '../domain/session_exercise_override.dart';
 import '../domain/workout_session.dart';
 import '../domain/workout_set.dart';
+import '../data/workout_dao.dart';
 import 'active_workout_controller.dart';
 import 'pr_detector.dart';
 
@@ -58,6 +61,14 @@ class ExerciseSummary {
     required this.delta,
     required this.pr,
     required this.planPe,
+    this.planVariant,
+    this.variantSlotPe,
+    this.variantOfName,
+    this.substituteSlotPe,
+    this.substituteSlotName,
+    this.substituteOverride,
+    this.isFirstExposure = false,
+    this.droppedFromDay = false,
   });
 
   final String exerciseId;
@@ -82,9 +93,47 @@ class ExerciseSummary {
   /// in or added ad hoc and isn't part of the plan.
   final ProgramExercise? planPe;
 
+  /// SOW-14: set when this exercise is a VARIANT of one of the day's slots
+  /// (and not itself a slot's base). Its target is the variant's own
+  /// prescription, inheriting from [variantSlotPe] (the slot) each field it
+  /// leaves null — see [variantPlan]; [variantOfName] is the base's name.
+  final ProgramExerciseVariant? planVariant;
+  final ProgramExercise? variantSlotPe;
+  final String? variantOfName;
+
+  /// SOW-14 / H3: set when this exercise was swapped into a slot with "Change
+  /// exercise" this session and is neither a base nor a variant: the summary
+  /// offers to save it as a variant of that slot.
+  final ProgramExercise? substituteSlotPe;
+  final String? substituteSlotName;
+
+  /// The slot's override row when it still runs this swapped-in exercise:
+  /// its targets are the session prescription SAVE AS VARIANT stores.
+  final SessionExerciseOverride? substituteOverride;
+
+  /// H4: the exercise's first-ever session (outside the first-ever workout,
+  /// which has its own baseline treatment). [pr] is null; the card reads
+  /// FIRST TIME instead of a guaranteed, meaningless weight PR.
+  final bool isFirstExposure;
+
+  /// SOW-15: the exercise ran on a slot that was deleted from the day while
+  /// this workout was in progress, and is not in the plan otherwise. Its sets
+  /// stay (NOT IN PLAN), but the summary doesn't offer ADD TO DAY for what the
+  /// lifter just removed.
+  final bool droppedFromDay;
+
   int get setCount => setGroups.length;
+
+  /// A variant's target as it runs: its own sets, reps, drops, weight and
+  /// step, the slot's for each one it leaves null (DEC-0007 #13).
+  ProgramExercise? get variantPlan => planVariant == null ||
+          variantSlotPe == null
+      ? null
+      : planVariant!.resolvedOn(variantSlotPe!);
+
   bool get isPr => pr != null && pr!.isPr;
-  bool get inPlan => planPe != null;
+  bool get isVariant => planVariant != null;
+  bool get inPlan => planPe != null || planVariant != null;
 }
 
 /// The whole screen's data, derived once in the provider.
@@ -184,6 +233,8 @@ final sessionSummaryProvider =
   // The day's current targets keyed by exerciseId. A missing key means the
   // exercise isn't in the plan (substituted or inserted mid-session).
   final planByExercise = <String, ProgramExercise>{};
+  final slots = <ProgramExerciseView>[];
+  var variantsBySlot = <String, List<ProgramExerciseVariantView>>{};
   if (session.programDayId != null) {
     final d = await programDao.findDay(session.programDayId!);
     dayName = d?.name;
@@ -194,8 +245,20 @@ final sessionSummaryProvider =
     for (final v
         in await programDao.listProgramExercises(session.programDayId!)) {
       planByExercise[v.pe.exerciseId] = v.pe;
+      slots.add(v);
     }
+    variantsBySlot =
+        await programDao.listVariantsForDay(session.programDayId!);
   }
+  final overrides = await dao.overridesForSession(sessionId);
+  final dropped = droppedSlotExerciseIds(slots: slots, overrides: overrides);
+  final attribution = attributeToSlots(
+    exerciseIds: orderedIds,
+    slots: slots,
+    variantsBySlot: variantsBySlot,
+    overrides: overrides,
+    droppedIds: dropped,
+  );
 
   // Previous completed session on this same day — drives every "vs last"
   // comparison on the screen, plus the headline volume delta.
@@ -264,8 +327,30 @@ final sessionSummaryProvider =
               prevTopWeightKg: prevTop,
               prevTopReps: prevReps,
             ),
-      pr: isFirstEver ? null : prs[id],
+      // H4: a first exposure is a PR by definition — suppress it, as the
+      // first-ever session already does.
+      pr: isFirstEver || (prs[id]?.isFirstExposure ?? false) ? null : prs[id],
+      isFirstExposure: !isFirstEver && (prs[id]?.isFirstExposure ?? false),
       planPe: planByExercise[id],
+      planVariant: attribution[id]?.variant,
+      variantSlotPe: attribution[id]?.variant == null
+          ? null
+          : attribution[id]?.slot.pe,
+      variantOfName: attribution[id]?.variant == null
+          ? null
+          : attribution[id]?.slot.exerciseName,
+      substituteSlotPe: attribution[id]?.variant == null
+          ? attribution[id]?.slot.pe
+          : null,
+      substituteSlotName: attribution[id]?.variant == null
+          ? attribution[id]?.slot.exerciseName
+          : null,
+      substituteOverride: attribution[id]?.variant == null
+          ? attribution[id]?.override
+          : null,
+      droppedFromDay: dropped.contains(id) &&
+          planByExercise[id] == null &&
+          attribution[id] == null,
     ));
   }
 
@@ -283,6 +368,159 @@ final sessionSummaryProvider =
   );
 });
 
+/// SOW-15: the exercises a slot deleted from the day mid-workout ran this
+/// session — read off its override row, which the delete keeps as a dropped
+/// marker (a non-inserted row whose slot is no longer on the day). An
+/// exercise that was also inserted this session is left out: that one was
+/// "added", and ADD TO DAY still applies. Pure for tests.
+Set<String> droppedSlotExerciseIds({
+  required List<ProgramExerciseView> slots,
+  required List<SessionExerciseOverride> overrides,
+}) {
+  final slotIds = {for (final s in slots) s.pe.id};
+  List<String> ran(SessionExerciseOverride o) =>
+      [o.exerciseId, ?o.previousExerciseId, ...o.ranExerciseIds];
+  final inserted = {
+    for (final o in overrides)
+      if (o.inserted) ...ran(o),
+  };
+  return {
+    for (final o in overrides)
+      if (!o.inserted && !slotIds.contains(o.programExerciseId))
+        for (final id in ran(o))
+          if (!inserted.contains(id)) id,
+  };
+}
+
+/// Where a logged exercise that is NOT a slot's base belongs (SOW-14).
+class SlotAttribution {
+  const SlotAttribution({required this.slot, this.variant, this.override});
+  final ProgramExerciseView slot;
+
+  /// The slot's variant row for the exercise; null when the exercise was only
+  /// swapped into [slot] ("Change exercise") and isn't a variant of it.
+  final ProgramExerciseVariant? variant;
+
+  /// For a swap: [slot]'s override row when the exercise is still the one it
+  /// runs (`exercise_id`), i.e. the row holds its session prescription. Null
+  /// when the slot moved on (only `previous_exercise_id` matches) or for a
+  /// lost link of a swap chain.
+  final SessionExerciseOverride? override;
+}
+
+/// Attribute each logged exercise to a day slot. Priority: a slot's base
+/// (absent from the result — the caller's plan lookup handles it) → this
+/// session's override for a slot that holds it as a variant → the first slot
+/// (in day order) holding it as a variant → a slot it was swapped into this
+/// session (override row's exercise, previous exercise, or any exercise in its
+/// `ran_exercise_ids` — DB v9, D-0016 review #1; inserted rows never count —
+/// those exercises are "added", not swapped) → review #6, the middle of a
+/// swap chain on a row written before v9 (B → X → Y → Z kept only Z and Y on
+/// the override row, so X is in no row): every exercise logged this session
+/// got there through a plan slot, a variant, an insert or a "Change
+/// exercise", so one that matches
+/// none of them was a swap — attributed to the swapped slot when exactly one
+/// slot was swapped outside its members and no inserted exercise was swapped
+/// (whose own chain could have lost links). Otherwise it stays unattributed
+/// (ADD TO DAY), a documented limitation. [droppedIds] — what a slot deleted
+/// mid-workout ran ([droppedSlotExerciseIds], SOW-15) — never takes that
+/// fallback either: those exercises got there through a slot, just not one
+/// still on the day (D-0017 review #1). Pure for tests.
+Map<String, SlotAttribution> attributeToSlots({
+  required List<String> exerciseIds,
+  required List<ProgramExerciseView> slots,
+  required Map<String, List<ProgramExerciseVariantView>> variantsBySlot,
+  required List<SessionExerciseOverride> overrides,
+  Set<String> droppedIds = const {},
+}) {
+  final bases = {for (final s in slots) s.pe.exerciseId};
+  final slotById = {for (final s in slots) s.pe.id: s};
+  ProgramExerciseVariant? variantOf(String slotId, String exerciseId) {
+    for (final v in variantsBySlot[slotId] ?? const []) {
+      if (v.variant.exerciseId == exerciseId) return v.variant;
+    }
+    return null;
+  }
+
+  final touching = [
+    for (final o in overrides)
+      if (!o.inserted && slotById.containsKey(o.programExerciseId)) o,
+  ];
+  // Review #6 fallback (see the doc comment): the one slot swapped outside its
+  // members, if exactly one, and only when no inserted exercise was swapped.
+  bool isMember(String slotId, String? exerciseId) =>
+      exerciseId == null ||
+      slotById[slotId]!.pe.exerciseId == exerciseId ||
+      variantOf(slotId, exerciseId) != null;
+  final swappedSlots = {
+    for (final o in touching)
+      if (!isMember(o.programExerciseId, o.exerciseId) ||
+          !isMember(o.programExerciseId, o.previousExerciseId) ||
+          o.ranExerciseIds.any((x) => !isMember(o.programExerciseId, x)))
+        o.programExerciseId,
+  };
+  final insertedRows = [for (final o in overrides) if (o.inserted) o];
+  final insertedIds = {
+    for (final o in insertedRows) ...[
+      o.exerciseId,
+      ?o.previousExerciseId,
+      ...o.ranExerciseIds,
+    ],
+  };
+  final chainSlot = swappedSlots.length == 1 &&
+          insertedRows.every((o) => o.previousExerciseId == null)
+      ? slotById[swappedSlots.single]
+      : null;
+  // The slot ran [id] this session: its current or previous exercise, or one
+  // further back in the chain (v9).
+  bool ran(SessionExerciseOverride o, String id) =>
+      o.exerciseId == id ||
+      o.previousExerciseId == id ||
+      o.ranExerciseIds.contains(id);
+
+  final out = <String, SlotAttribution>{};
+  for (final id in exerciseIds) {
+    if (bases.contains(id)) continue;
+    SlotAttribution? found;
+    for (final o in touching) {
+      if (!ran(o, id)) continue;
+      final v = variantOf(o.programExerciseId, id);
+      if (v != null) {
+        found = SlotAttribution(slot: slotById[o.programExerciseId]!, variant: v);
+        break;
+      }
+    }
+    if (found == null) {
+      for (final s in slots) {
+        final v = variantOf(s.pe.id, id);
+        if (v != null) {
+          found = SlotAttribution(slot: s, variant: v);
+          break;
+        }
+      }
+    }
+    if (found == null) {
+      for (final o in touching) {
+        if (ran(o, id)) {
+          found = SlotAttribution(
+            slot: slotById[o.programExerciseId]!,
+            override: o.exerciseId == id ? o : null,
+          );
+          break;
+        }
+      }
+    }
+    if (found == null &&
+        chainSlot != null &&
+        !insertedIds.contains(id) &&
+        !droppedIds.contains(id)) {
+      found = SlotAttribution(slot: chainSlot);
+    }
+    if (found != null) out[id] = found;
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  PROGRAM UPDATES
 // ─────────────────────────────────────────────────────────────────────────────
@@ -292,8 +530,17 @@ enum ProgramUpdateKind {
   /// its target weight — bump `default_weight`.
   raise,
 
-  /// The exercise isn't in the plan (substituted or inserted) — add it.
+  /// The exercise isn't in the plan (inserted, or not attributable to a slot)
+  /// — add it to the day.
   add,
+
+  /// SOW-14: a variant beat its own target — bump the VARIANT's weight, never
+  /// the base's.
+  raiseVariant,
+
+  /// SOW-14 / H3: swapped into a slot with "Change exercise" — save it as a
+  /// variant of that slot.
+  addVariant,
 }
 
 /// One proposed edit to the program template, derived from what was actually
@@ -308,9 +555,14 @@ class ProgramUpdate {
     required this.targetSets,
     required this.targetRepsMin,
     required this.targetRepsMax,
+    this.dropCount = 0,
     this.planPe,
     this.applied = false,
     this.createdProgramExerciseId,
+    this.programExerciseId,
+    this.slotName,
+    this.planVariant,
+    this.createdVariantId,
   });
 
   final String exerciseId;
@@ -326,6 +578,10 @@ class ProgramUpdate {
   final int targetRepsMin;
   final int targetRepsMax;
 
+  /// Drops per set — set on [ProgramUpdateKind.addVariant], which stores the
+  /// whole prescription on the new variant (DEC-0007 #13); 0 otherwise.
+  final int dropCount;
+
   /// The plan row as it was BEFORE applying — kept verbatim so undo restores
   /// every field, not just the weight. Null for [ProgramUpdateKind.add].
   final ProgramExercise? planPe;
@@ -335,11 +591,32 @@ class ProgramUpdate {
   /// Id of the row created by an ADD, so undo can delete exactly that row.
   final String? createdProgramExerciseId;
 
-  double? get currentTargetKg => planPe?.defaultWeightKg;
+  /// Variant kinds: the slot the variant belongs to (or will), and its base
+  /// exercise's name for "VARIANT OF X" / "SAVE AS VARIANT OF X".
+  final String? programExerciseId;
+  final String? slotName;
+
+  /// [ProgramUpdateKind.raiseVariant]: the variant row as it was before
+  /// applying, kept verbatim for undo.
+  final ProgramExerciseVariant? planVariant;
+
+  /// [ProgramUpdateKind.addVariant]: the variant row created, so undo deletes
+  /// exactly that row.
+  final String? createdVariantId;
+
+  bool get isAddKind =>
+      kind == ProgramUpdateKind.add || kind == ProgramUpdateKind.addVariant;
+  bool get isVariantKind =>
+      kind == ProgramUpdateKind.raiseVariant ||
+      kind == ProgramUpdateKind.addVariant;
+
+  double? get currentTargetKg =>
+      planPe?.defaultWeightKg ?? planVariant?.defaultWeightKg;
 
   ProgramUpdate copyWith({
     bool? applied,
     String? createdProgramExerciseId,
+    String? createdVariantId,
     bool clearCreated = false,
   }) =>
       ProgramUpdate(
@@ -351,11 +628,17 @@ class ProgramUpdate {
         targetSets: targetSets,
         targetRepsMin: targetRepsMin,
         targetRepsMax: targetRepsMax,
+        dropCount: dropCount,
         planPe: planPe,
         applied: applied ?? this.applied,
         createdProgramExerciseId: clearCreated
             ? null
             : (createdProgramExerciseId ?? this.createdProgramExerciseId),
+        programExerciseId: programExerciseId,
+        slotName: slotName,
+        planVariant: planVariant,
+        createdVariantId:
+            clearCreated ? null : (createdVariantId ?? this.createdVariantId),
       );
 }
 
@@ -390,8 +673,64 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
           if (set.reps > repsMax) repsMax = set.reps;
         }
       }
+      final isWeightPr = e.pr != null && e.pr!.kind == PrKind.weight;
+      final variant = e.planVariant;
+      if (variant != null) {
+        // A variant is tracked on its own (H1): offer its target, never ADD.
+        // Same rule as a base raise — today's top weight beat the variant's
+        // own target, or a weight PR. The raise moves the weight only; the
+        // variant's sets, reps and drops (or its NULLs) stay as they are.
+        if (e.topWeightKg <= variant.defaultWeightKg + 1e-6 && !isWeightPr) {
+          continue;
+        }
+        out.add(ProgramUpdate(
+          exerciseId: e.exerciseId,
+          exerciseName: e.name,
+          kind: ProgramUpdateKind.raiseVariant,
+          programDayId: dayId,
+          proposedTargetKg: e.topWeightKg,
+          targetSets: e.setCount,
+          targetRepsMin: repsMin,
+          targetRepsMax: repsMax,
+          programExerciseId: variant.programExerciseId,
+          slotName: e.variantOfName,
+          planVariant: variant,
+        ));
+        continue;
+      }
       final pe = e.planPe;
+      final sub = e.substituteSlotPe;
+      if (pe == null && sub != null) {
+        // SAVE AS VARIANT keeps the swap's session prescription — the
+        // override's targets while the slot still runs it, else what was
+        // done (top sets' rep range, the deepest drop chain).
+        final o = e.substituteOverride;
+        var topMin = e.topReps, topMax = e.topReps, drops = 0;
+        for (final g in e.setGroups) {
+          if (g.isEmpty) continue;
+          if (g.first.reps < topMin) topMin = g.first.reps;
+          if (g.first.reps > topMax) topMax = g.first.reps;
+          if (g.length - 1 > drops) drops = g.length - 1;
+        }
+        out.add(ProgramUpdate(
+          exerciseId: e.exerciseId,
+          exerciseName: e.name,
+          kind: ProgramUpdateKind.addVariant,
+          programDayId: dayId,
+          proposedTargetKg: e.topWeightKg,
+          targetSets: o?.targetSets ?? e.setCount,
+          targetRepsMin: o?.targetRepsMin ?? topMin,
+          targetRepsMax: o?.targetRepsMax ?? topMax,
+          dropCount: o?.dropCount ?? drops,
+          programExerciseId: sub.id,
+          slotName: e.substituteSlotName,
+        ));
+        continue;
+      }
       if (pe == null) {
+        // SOW-15: deleted from the day during this workout — don't offer to
+        // put it back.
+        if (e.droppedFromDay) continue;
         out.add(ProgramUpdate(
           exerciseId: e.exerciseId,
           exerciseName: e.name,
@@ -408,7 +747,6 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
       // weight PR — a lifter expects to be able to lock a PR in even if their
       // planned target sits above it.
       final beatsTarget = e.topWeightKg > pe.defaultWeightKg + 1e-6;
-      final isWeightPr = e.pr != null && e.pr!.kind == PrKind.weight;
       if (!beatsTarget && !isWeightPr) continue;
       out.add(ProgramUpdate(
         exerciseId: e.exerciseId,
@@ -443,13 +781,21 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
   int get pendingCount => _list.where((u) => !u.applied).length;
   int get appliedCount => _list.where((u) => u.applied).length;
 
-  Future<void> applyOne(String exerciseId) async {
+  /// Apply one update. Returns the [VariantConflict] when the program refused
+  /// it (SOW-14 day rule — e.g. the exercise was added to the day by hand
+  /// since); the update then stays pending and nothing is written.
+  Future<VariantConflict?> applyOne(String exerciseId) async {
     final list = [...await _resolved()];
     final i = list.indexWhere((u) => u.exerciseId == exerciseId);
-    if (i < 0 || list[i].applied) return;
-    list[i] = await _apply(list[i]);
+    if (i < 0 || list[i].applied) return null;
+    try {
+      list[i] = await _apply(list[i]);
+    } on VariantConflict catch (e) {
+      return e;
+    }
     state = AsyncData(list);
     _refreshDay();
+    return null;
   }
 
   Future<void> undoOne(String exerciseId) async {
@@ -467,8 +813,12 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
     var n = 0;
     for (var i = 0; i < list.length; i++) {
       if (list[i].applied) continue;
-      list[i] = await _apply(list[i]);
-      n++;
+      try {
+        list[i] = await _apply(list[i]);
+      } on VariantConflict {
+        continue; // refused by the day rule: stays pending
+      }
+      if (list[i].applied) n++;
     }
     if (n > 0) {
       state = AsyncData(list);
@@ -502,6 +852,9 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
         );
         return u.copyWith(applied: true);
       case ProgramUpdateKind.add:
+        // An inserted exercise that has become a variant on this day since
+        // (SOW-14 day rule) is refused by the DAO: stays pending, the caller
+        // shows why.
         final created = await dao.addProgramExercise(
           programDayId: u.programDayId,
           exerciseName: u.exerciseName,
@@ -511,6 +864,22 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
           defaultWeightKg: u.proposedTargetKg,
         );
         return u.copyWith(applied: true, createdProgramExerciseId: created.id);
+      case ProgramUpdateKind.raiseVariant:
+        await dao.updateVariant(
+          u.planVariant!.copyWith(defaultWeightKg: u.proposedTargetKg),
+        );
+        return u.copyWith(applied: true);
+      case ProgramUpdateKind.addVariant:
+        final created = await dao.addVariant(
+          programExerciseId: u.programExerciseId!,
+          exerciseName: u.exerciseName,
+          defaultWeightKg: u.proposedTargetKg,
+          targetSets: u.targetSets,
+          targetRepsMin: u.targetRepsMin,
+          targetRepsMax: u.targetRepsMax,
+          dropCount: u.dropCount,
+        );
+        return u.copyWith(applied: true, createdVariantId: created.id);
     }
   }
 
@@ -525,6 +894,13 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
         final id = u.createdProgramExerciseId;
         if (id != null) await dao.deleteProgramExercise(id);
         return u.copyWith(applied: false, clearCreated: true);
+      case ProgramUpdateKind.raiseVariant:
+        await dao.updateVariant(u.planVariant!);
+        return u.copyWith(applied: false);
+      case ProgramUpdateKind.addVariant:
+        final id = u.createdVariantId;
+        if (id != null) await dao.deleteVariant(id);
+        return u.copyWith(applied: false, clearCreated: true);
     }
   }
 
@@ -534,6 +910,9 @@ class ProgramUpdatesController extends AsyncNotifier<List<ProgramUpdate>> {
     final list = _list;
     if (list.isEmpty) return;
     ref.invalidate(dayExercisesProvider(list.first.programDayId));
+    ref.invalidate(dayVariantsProvider(list.first.programDayId));
+    ref.invalidate(slotVariantsProvider);
+    ref.invalidate(programExerciseProvider);
   }
 }
 

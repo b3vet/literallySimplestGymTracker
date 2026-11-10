@@ -5,12 +5,20 @@ import '../../../core/settings/settings_provider.dart';
 import '../../../core/settings/settings_repository.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../main.dart' show databaseProvider;
+import '../../history/application/history_provider.dart'
+    show historyListProvider;
+import '../../home/application/home_provider.dart'
+    show lastSessionSummaryProvider;
 import '../../programs/application/programs_provider.dart';
 import '../../programs/data/program_dao.dart';
 import '../../programs/domain/program_exercise.dart';
+import '../../programs/domain/program_exercise_variant.dart';
+import '../../stats/application/stats_provider.dart'
+    show exerciseProgressionProvider, loggedExercisesProvider;
 import '../data/workout_dao.dart';
 import '../domain/active_session.dart';
 import '../domain/session_exercise_override.dart';
+import '../domain/workout_session.dart';
 import '../domain/workout_set.dart';
 import 'live_activity_controller.dart';
 import 'pr_detector.dart';
@@ -57,6 +65,50 @@ Cursor cursorAfter(List<PlannedExercise> queue, List<WorkoutSet> loggedSets) {
   return Cursor(exerciseIdx: queue.length, setIdx: 0);
 }
 
+/// Set target for [toExerciseId] when a slot switches between its members
+/// (base, variants — and every exercise it ran this session, "Change
+/// exercise" swaps included: [PlannedExercise.slotExerciseIds]), so the sets
+/// already done on the slot count instead of restarting (SOW-14). Pure +
+/// top-level for tests.
+///
+/// Switching to member M means "do M's prescription for the rest of this slot"
+/// (DEC-0007 #13): M's planned set count — its own, or the slot's when it
+/// inherits — minus every set already done on the slot's OTHER exercises, and
+/// never below what M itself already has:
+///
+///     max(doneOn(M), M.targetSets − Σ doneOn(other slot exercises))
+///
+/// Base Bar (plan 3) → Change exercise to Cable, 2 logged → Machine: 1 →
+/// back to Bar: still 1 — the Cable sets stay counted though the override
+/// row's two links no longer name Cable (D-0016 review #1).
+///
+/// Base 3 → variant 4 with 1 done on the base → 3 on the variant; base 4 →
+/// variant 2 with 3 done → 0: the slot counts as complete under M's plan,
+/// which [PlannedExercise.canSwitchTo] refuses up front (review #2: no
+/// inflation on a complete slot). The result depends only on the logged sets
+/// and M's plan, so round trips cannot drift; a session "Add set" stays with
+/// the member it was made on. Completed sets count distinct groups, so a drop
+/// set counts once.
+int carryOverTargetSets(
+  PlannedExercise slot,
+  String toExerciseId,
+  List<WorkoutSet> logged,
+) {
+  SlotVariant? to;
+  for (final m in slot.members) {
+    if (m.exerciseId == toExerciseId) to = m;
+  }
+  final planned = to == null ? slot.targetSets : slot.prescriptionOf(to).sets;
+  final others = slot.slotExerciseIds..remove(toExerciseId);
+  var doneElsewhere = 0;
+  for (final id in others) {
+    doneElsewhere += completedSetsFor(logged, id);
+  }
+  final doneOnNew = completedSetsFor(logged, toExerciseId);
+  final target = planned - doneElsewhere;
+  return target < doneOnNew ? doneOnNew : target;
+}
+
 /// Fractional queue `position` that places a newly inserted exercise
 /// immediately after the slot at [afterIndex]: the midpoint to the next slot's
 /// position, or `last + 1` when inserting after the end. Pure + top-level so
@@ -77,9 +129,13 @@ final workoutDaoProvider = Provider<WorkoutDao>((ref) {
 /// The single most-recent set ever logged for [exerciseId] (across all
 /// sessions), or null when the exercise has no history. Feeds the active-
 /// workout footer's 1-tap "repeat last set" chip (SOW-03). The in-session last
-/// set, when one exists, takes precedence at the call site — so this is only
-/// consulted before the first set of the exercise is logged this session,
-/// which is why a stale cached value after logging is harmless.
+/// set, when one exists, takes precedence at the call site.
+///
+/// Not autoDispose, so it is invalidated (with [lastWeightForExerciseProvider])
+/// whenever a set is written or a workout ends — see
+/// [ActiveWorkoutController]. Otherwise a lookup made while an exercise had no
+/// history (every first switch to a new variant) cached that "nothing" for the
+/// whole process and the chip never appeared later (QA VAR-04).
 final lastSetForExerciseProvider =
     FutureProvider.family<WorkoutSet?, String>((ref, exerciseId) {
   return ref.watch(workoutDaoProvider).lastSetForExercise(exerciseId);
@@ -129,6 +185,13 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     return _resumeIfPossible();
   }
 
+  /// Drop the cached "last set / last weight" lookups after a set is written
+  /// or a workout ends, so the next lookup reads the DB (QA VAR-04).
+  void _invalidateLastSets() {
+    ref.invalidate(lastSetForExerciseProvider);
+    ref.invalidate(lastWeightForExerciseProvider);
+  }
+
   DateTime? _currentRestEndsAt() {
     final rt = ref.read(restTimerProvider);
     return rt.endsAt != null && rt.endsAt!.isAfter(DateTime.now())
@@ -154,17 +217,29 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
 
   Future<ActiveSession?> _resumeIfPossible() async {
     final session = await _workoutDao.findActiveSession();
-    if (session == null || session.programDayId == null) return null;
+    if (session == null) return null;
+    if (session.programDayId == null) {
+      // Its program/day was deleted mid-workout (the delete detaches sessions
+      // rather than failing) and the app was killed before the delete could
+      // close it (see [closeIfDetached]).
+      await _closeDetached(session.id);
+      return null;
+    }
 
     final planned = await _programDao.listProgramExercises(session.programDayId!);
-    if (planned.isEmpty) {
-      // Nothing to do — abandon.
+    final overrides = await _workoutDao.overridesForSession(session.id);
+    final variants =
+        await _programDao.listVariantsForDay(session.programDayId!);
+    final queue = _buildQueue(planned, overrides, variants);
+    final loggedSets = await _workoutDao.setsForSession(session.id);
+    if (queue.isEmpty && loggedSets.isEmpty) {
+      // Nothing to do and nothing logged — abandon. With sets logged the
+      // workout stays open on an empty queue (ALL DONE → FINISH): the day's
+      // last exercise was deleted mid-workout (SOW-15). Abandoning it here
+      // used to drop those sets out of History, PRs and Stats.
       await _workoutDao.abandonSession(session.id);
       return null;
     }
-    final overrides = await _workoutDao.overridesForSession(session.id);
-    final queue = _buildQueue(planned, overrides);
-    final loggedSets = await _workoutDao.setsForSession(session.id);
     final cursor = cursorAfter(queue, loggedSets);
     final resumed = ActiveSession(
       sessionId: session.id,
@@ -185,6 +260,161 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     return resumed;
   }
 
+  /// Close a session whose program day is gone. There is no plan to rebuild a
+  /// queue from, and leaving it `active` would block every new workout. Keep
+  /// whatever was logged — complete it, ended at its last set (not "now", so
+  /// the duration stays honest), so the sets stay in History — else drop it.
+  /// Then tear down like [finish]: rest timer and Live Activity (all of them —
+  /// on a cold start the activity belongs to the previous process).
+  Future<void> _closeDetached(String sessionId) async {
+    final sets = await _workoutDao.setsForSession(sessionId);
+    if (sets.isEmpty) {
+      await _workoutDao.abandonSession(sessionId);
+    } else {
+      var last = sets.first.loggedAt;
+      for (final s in sets) {
+        if (s.loggedAt.isAfter(last)) last = s.loggedAt;
+      }
+      await _workoutDao.completeSession(sessionId, endedAt: last);
+    }
+    // What aggregates completed sessions may have been read before the close
+    // (on a cold start Home's LAST strip races the resume — QA RISK-05).
+    ref
+      ..invalidate(lastSessionSummaryProvider)
+      ..invalidate(historyListProvider)
+      ..invalidate(loggedExercisesProvider)
+      ..invalidate(exerciseProgressionProvider);
+    ref.read(restTimerProvider.notifier).dismiss();
+    await _liveActivity.endAll();
+  }
+
+  /// After a program or day delete: if the running workout lost its day,
+  /// close it now (same rule as on resume) instead of offering RESUME until
+  /// the next cold start. Returns whether it closed one.
+  Future<bool> closeIfDetached() async {
+    final current = state.value;
+    if (current == null) return false;
+    final session = await _workoutDao.findSession(current.sessionId);
+    if (session == null ||
+        session.status != SessionStatus.active ||
+        session.programDayId != null) {
+      return false;
+    }
+    state = const AsyncValue.data(null);
+    await _closeDetached(session.id);
+    return true;
+  }
+
+  /// Whether deleting the program slot [programExerciseId] would leave the
+  /// running workout empty with nothing logged — the case in which
+  /// [dropDeletedSlots] abandons it. Read by the delete confirmation so it can
+  /// say the workout ends rather than that it carries on without the slot.
+  bool dropWouldEnd(String programExerciseId) {
+    final now = state.value;
+    if (now == null || now.queue.isEmpty || now.loggedSets.isNotEmpty) {
+      return false;
+    }
+    return now.queue.every(
+        (s) => !s.isInserted && s.programExerciseId == programExerciseId);
+  }
+
+  /// After a slot was deleted from the program (SOW-15): drop every template
+  /// slot of the running workout whose program row is gone. Inserted
+  /// exercises have no program row and stay. Logged sets are kept — they are
+  /// keyed by exercise, not by slot. The slot's override row was marked
+  /// dropped by [ProgramDao.deleteProgramExercise] and is ignored from here
+  /// on, since the queue is built from the plan.
+  ///
+  /// Cursor: a kept current slot stays current. If the current slot was
+  /// dropped, the cursor moves to the next remaining slot that isn't skipped
+  /// or complete; with none after it, to the first slot with sets left ([cursorAfter]) —
+  /// or the finished state, where the workout stays open and FINISH still
+  /// works — unless nothing was logged, in which case it is abandoned, the
+  /// same rule as on resume. The Live Activity is updated here and the watch
+  /// snapshot follows the state change, so neither keeps showing the dropped
+  /// slot. Returns whether anything was dropped.
+  ///
+  /// The delete also renumbered the day's slots and remapped this workout's
+  /// inserted keys (see [ProgramDao.deleteProgramExercise]); the kept slots
+  /// take those new positions, so a later insert is placed against the same
+  /// numbers a resume rebuilds from. The order itself does not change.
+  Future<bool> dropDeletedSlots() async {
+    final current = state.value;
+    if (current == null) return false;
+    final planned =
+        await _programDao.listProgramExercises(current.programDayId);
+    final live = {for (final v in planned) v.pe.id: v.pe.position};
+    final insertedPos = {
+      for (final o in await _workoutDao.overridesForSession(current.sessionId))
+        if (o.inserted && o.orderPos != null) o.programExerciseId: o.orderPos!,
+    };
+    // Re-read: the state may have moved while the plan was loading.
+    final now = state.value;
+    if (now == null || now.sessionId != current.sessionId) return false;
+    PlannedExercise synced(PlannedExercise s) {
+      final pos = s.isInserted
+          ? insertedPos[s.programExerciseId]
+          : live[s.programExerciseId]?.toDouble();
+      return pos == null || pos == s.position ? s : s.copyWith(position: pos);
+    }
+
+    final oldIdx = now.cursor.exerciseIdx;
+    final kept = <PlannedExercise>[];
+    var keptCurrent = -1;
+    var keptBefore = 0;
+    for (var i = 0; i < now.queue.length; i++) {
+      final slot = now.queue[i];
+      if (!slot.isInserted && !live.containsKey(slot.programExerciseId)) {
+        continue;
+      }
+      if (i == oldIdx) keptCurrent = kept.length;
+      if (i < oldIdx) keptBefore++;
+      kept.add(synced(slot));
+    }
+    if (kept.length == now.queue.length) {
+      // Nothing dropped (the slot was added after the workout started), but
+      // the renumbering may still have moved the kept slots' keys.
+      final moved =
+          kept.indexed.any((e) => e.$2.position != now.queue[e.$1].position);
+      if (moved) state = AsyncValue.data(now.copyWith(queue: kept));
+      return false;
+    }
+    if (kept.isEmpty && now.loggedSets.isEmpty) {
+      // Nothing left and nothing logged (inserted exercises are always kept,
+      // so none was inserted either): abandon now, as a resume would, rather
+      // than let FINISH save an empty workout (D-0017 review #5). [abandon]
+      // clears the rest timer and ends the Live Activity; Home and the
+      // workout screen follow the state to null, as after a day delete.
+      await abandon();
+      return true;
+    }
+
+    final Cursor cursor;
+    if (keptCurrent >= 0) {
+      cursor = now.cursor.copyWith(exerciseIdx: keptCurrent);
+    } else if (oldIdx >= now.queue.length) {
+      cursor = Cursor(exerciseIdx: kept.length, setIdx: 0);
+    } else {
+      var idx = keptBefore;
+      // Walk past skipped and already complete slots (D-0017 review #2:
+      // landing on a done slot showed set 3/2).
+      while (idx < kept.length &&
+          (kept[idx].skipped || kept[idx].isCompleteIn(now.loggedSets))) {
+        idx++;
+      }
+      cursor = idx < kept.length
+          ? Cursor(
+              exerciseIdx: idx,
+              setIdx: completedSetsFor(now.loggedSets, kept[idx].exerciseId),
+            )
+          : cursorAfter(kept, now.loggedSets);
+    }
+    final next = now.copyWith(queue: kept, cursor: cursor);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
+    return true;
+  }
+
   /// Start a new session for the given program day. Fails if there's already an active session.
   Future<void> start(String programDayId) async {
     state = const AsyncValue.loading();
@@ -197,12 +427,16 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       if (planned.isEmpty) {
         throw StateError('This day has no exercises.');
       }
+      final variants = await _programDao.listVariantsForDay(programDayId);
       final session = await _workoutDao.startSession(programDayId);
       final created = ActiveSession(
         sessionId: session.id,
         programDayId: programDayId,
         startedAt: session.startedAt,
-        queue: planned.map(PlannedExercise.fromView).toList(),
+        queue: [
+          for (final v in planned)
+            PlannedExercise.fromView(v, variants: variants[v.pe.id] ?? const []),
+        ],
         cursor: const Cursor(exerciseIdx: 0, setIdx: 0),
         loggedSets: const [],
       );
@@ -253,6 +487,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       cursor: nextCursor,
     );
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
     return newSet;
   }
@@ -290,6 +525,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         : current.cursor;
     final updated = current.copyWith(loggedSets: logged, cursor: nextCursor);
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
   }
 
@@ -303,6 +539,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         current.loggedSets.where((s) => s.groupKey != groupKey).toList();
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -337,6 +574,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     }
     final next = current.copyWith(loggedSets: logged);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -390,6 +628,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       cursor: nextCursor,
     );
     state = AsyncValue.data(updated);
+    _invalidateLastSets();
     _pushLiveActivity(updated);
   }
 
@@ -403,6 +642,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ];
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -414,6 +654,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         current.loggedSets.where((s) => s.id != setId).toList();
     final next = current.copyWith(loggedSets: updatedSets);
     state = AsyncValue.data(next);
+    _invalidateLastSets();
     _pushLiveActivity(next);
   }
 
@@ -498,6 +739,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: slot.dropCount,
+      ranExerciseIds: slot.ranExerciseIds,
     );
     final skipped = slot.copyWith(skipped: true, isOverridden: true);
     final newQueue = [...current.queue]..[idx] = skipped;
@@ -543,6 +785,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       await _workoutDao.deleteSet(removed.id);
       newLoggedSets =
           current.loggedSets.where((s) => s.id != removed.id).toList();
+      _invalidateLastSets();
     }
     await _writeSlotTargetSets(
       current,
@@ -594,6 +837,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: slot.dropCount,
+      ranExerciseIds: slot.ranExerciseIds,
     );
     final replaced = slot.copyWith(targetSets: targetSets, isOverridden: true);
     final newQueue = [...current.queue]..[idx] = replaced;
@@ -667,13 +911,14 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   List<PlannedExercise> _applyOverrides(
     List<ProgramExerciseView> planned,
     List<SessionExerciseOverride> overrides,
+    Map<String, List<ProgramExerciseVariantView>> variants,
   ) {
-    if (overrides.isEmpty) {
-      return planned.map(PlannedExercise.fromView).toList();
-    }
     final byPeId = {for (final o in overrides) o.programExerciseId: o};
     return planned.map((v) {
-      final base = PlannedExercise.fromView(v);
+      final base = PlannedExercise.fromView(
+        v,
+        variants: variants[v.pe.id] ?? const [],
+      );
       final o = byPeId[v.pe.id];
       if (o == null) return base;
       return base.copyWith(
@@ -688,6 +933,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         previousExerciseId: o.previousExerciseId,
         skipped: o.skipped,
         dropCount: o.dropCount,
+        ranExerciseIds: o.ranExerciseIds,
       );
     }).toList();
   }
@@ -701,8 +947,9 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
   List<PlannedExercise> _buildQueue(
     List<ProgramExerciseView> planned,
     List<SessionExerciseOverride> overrides,
+    Map<String, List<ProgramExerciseVariantView>> variants,
   ) {
-    final slots = _applyOverrides(planned, overrides);
+    final slots = _applyOverrides(planned, overrides, variants);
     for (final o in overrides) {
       if (!o.inserted) continue;
       slots.add(PlannedExercise(
@@ -720,6 +967,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
         position: o.orderPos ?? double.maxFinite,
         isInserted: true,
         dropCount: o.dropCount,
+        ranExerciseIds: o.ranExerciseIds,
       ));
     }
     slots.sort((a, b) => a.position.compareTo(b.position));
@@ -759,6 +1007,8 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     final sameExercise = exercise.id == slot.exerciseId;
     final newPreviousExerciseId =
         sameExercise ? slot.previousExerciseId : slot.exerciseId;
+    // Keep the whole chain, not just the last link (D-0016 review #1).
+    final ran = sameExercise ? slot.ranExerciseIds : slot.ranThrough;
 
     await _workoutDao.upsertOverride(
       sessionId: current.sessionId,
@@ -774,6 +1024,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       inserted: slot.isInserted,
       orderPos: slot.isInserted ? slot.position : null,
       dropCount: dropCount,
+      ranExerciseIds: ran,
     );
     final replaced = slot.copyWith(
       exerciseId: exercise.id,
@@ -786,8 +1037,146 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
       isOverridden: true,
       previousExerciseId: newPreviousExerciseId,
       dropCount: dropCount,
+      ranExerciseIds: ran,
     );
     final newQueue = [...current.queue]..[queueIdx] = replaced;
+    final next = current.copyWith(queue: newQueue);
+    state = AsyncValue.data(next);
+    _pushLiveActivity(next);
+  }
+
+  /// Switch a slot to one of its members — the base or a variant (SOW-14).
+  /// One tap from the exercise-options menu, no confirm. The member's own
+  /// prescription applies for the rest of the slot (DEC-0007 #13): its weight
+  /// and step (step falls back to the slot's), its rep range and drop count,
+  /// and its set count less the sets done on the other members
+  /// ([carryOverTargetSets]). Persisted as a session override like a swap, with
+  /// `previous_exercise_id` rotated so the "PREVIOUSLY N SETS ON X" banner
+  /// works. Going back to the base with the plan's numbers restored drops the
+  /// override entirely, so the tune button returns to neutral. The cursor stays
+  /// put; logged sets keep their own exercise.
+  Future<void> switchVariant(int queueIdx, String exerciseId) async {
+    final current = state.value;
+    if (current == null) return;
+    if (queueIdx < 0 || queueIdx >= current.queue.length) return;
+    final slot = current.queue[queueIdx];
+    if (!slot.hasVariants || slot.skipped || exerciseId == slot.exerciseId) {
+      return;
+    }
+    SlotVariant? member;
+    for (final m in slot.members) {
+      if (m.exerciseId == exerciseId) member = m;
+    }
+    if (member == null) return;
+    // The per-member rule (SOW-14 §3 #6): refused only when the slot is
+    // already complete under the member's OWN plan — a switch there would
+    // leave nothing to do (review #2: no inflation). Whether the running
+    // member is complete doesn't matter.
+    if (!slot.canSwitchTo(member, current.loggedSets)) return;
+
+    final plan = slot.prescriptionOf(member);
+    final target = carryOverTargetSets(slot, exerciseId, current.loggedSets);
+    // Remember what the member we leave ran with (a "Change exercise" weight
+    // edit included), and come back to it rather than to the plan (review #3).
+    final weights = {
+      ...slot.memberWeights,
+      slot.exerciseId: MemberWeight(
+        weightKg: slot.defaultWeightKg,
+        weightStepKg: slot.weightStepKg,
+      ),
+    };
+    final remembered = weights[member.exerciseId];
+    final weight = remembered?.weightKg ?? member.defaultWeightKg;
+    final step = remembered != null
+        ? remembered.weightStepKg
+        : (member.weightStepKg ?? slot.baseWeightStepKg);
+
+    if (member.isBase) {
+      // Drop the override only when the round trip left no trace: nothing
+      // logged on any exercise the slot ran other than the base — variants
+      // and swapped-in exercises, even ones it has since left — and every
+      // plan value (sets, reps, drops, weight, step) as planned. Otherwise
+      // the override stays, so the PREVIOUSLY banner and summary attribution
+      // keep those sets and a weight edit survives.
+      final loggedOffBase = (slot.slotExerciseIds..remove(member.exerciseId))
+          .any((id) => completedSetsFor(current.loggedSets, id) > 0);
+      // Compared against the fresh plan row, so a plan edited mid-workout
+      // keeps the override too.
+      final planned =
+          await _programDao.listProgramExercises(current.programDayId);
+      ProgramExerciseView? row;
+      for (final v in planned) {
+        if (v.pe.id == slot.programExerciseId) row = v;
+      }
+      if (row != null &&
+          !loggedOffBase &&
+          target == row.pe.targetSets &&
+          plan.repsMin == row.pe.targetRepsMin &&
+          plan.repsMax == row.pe.targetRepsMax &&
+          plan.drops == row.pe.dropCount &&
+          weight == row.pe.defaultWeightKg &&
+          step == row.pe.weightStepKg) {
+        await _workoutDao.deleteOverride(
+          sessionId: current.sessionId,
+          programExerciseId: slot.programExerciseId,
+        );
+        final restored = slot.copyWith(
+          exerciseId: row.pe.exerciseId,
+          exerciseName: row.exerciseName,
+          targetSets: row.pe.targetSets,
+          targetRepsMin: row.pe.targetRepsMin,
+          targetRepsMax: row.pe.targetRepsMax,
+          dropCount: row.pe.dropCount,
+          defaultWeightKg: row.pe.defaultWeightKg,
+          weightStepKg: row.pe.weightStepKg,
+          isOverridden: false,
+          previousExerciseId: null,
+          memberWeights: weights,
+          // Nothing was logged off the base, so nothing to remember — and a
+          // resume (no override row) would not remember it either.
+          ranExerciseIds: const [],
+        );
+        _replaceSlot(current, queueIdx, restored);
+        return;
+      }
+    }
+
+    await _workoutDao.upsertOverride(
+      sessionId: current.sessionId,
+      programExerciseId: slot.programExerciseId,
+      exerciseId: member.exerciseId,
+      previousExerciseId: slot.exerciseId,
+      targetSets: target,
+      targetRepsMin: plan.repsMin,
+      targetRepsMax: plan.repsMax,
+      defaultWeightKg: weight,
+      weightStepKg: step,
+      skipped: false,
+      dropCount: plan.drops,
+      ranExerciseIds: slot.ranThrough,
+    );
+    _replaceSlot(
+      current,
+      queueIdx,
+      slot.copyWith(
+        exerciseId: member.exerciseId,
+        exerciseName: member.name,
+        targetSets: target,
+        targetRepsMin: plan.repsMin,
+        targetRepsMax: plan.repsMax,
+        dropCount: plan.drops,
+        defaultWeightKg: weight,
+        weightStepKg: step,
+        isOverridden: true,
+        previousExerciseId: slot.exerciseId,
+        memberWeights: weights,
+        ranExerciseIds: slot.ranThrough,
+      ),
+    );
+  }
+
+  void _replaceSlot(ActiveSession current, int idx, PlannedExercise slot) {
+    final newQueue = [...current.queue]..[idx] = slot;
     final next = current.copyWith(queue: newQueue);
     state = AsyncValue.data(next);
     _pushLiveActivity(next);
@@ -806,21 +1195,27 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     // An inserted exercise has no plan to revert to — leave it (the UI hides
     // "revert" for inserted slots; this guards the path defensively).
     if (slot.isInserted) return;
+    // Resolve the plan FIRST (review #5): rebuild this single queue item from
+    // the planned program — refetch the day's slots and pick this one, cheap on
+    // a typical day. If the slot was deleted from the program mid-workout
+    // there is nothing to revert to: keep the override and the queue as they
+    // are, rather than deleting the override and then failing, which left the
+    // DB and memory out of sync.
+    final planned =
+        await _programDao.listProgramExercises(current.programDayId);
+    ProgramExerciseView? original;
+    for (final v in planned) {
+      if (v.pe.id == slot.programExerciseId) original = v;
+    }
+    if (original == null) return;
+    final restored = PlannedExercise.fromView(
+      original,
+      variants: await _programDao.listVariants(original.pe.id),
+    );
     await _workoutDao.deleteOverride(
       sessionId: current.sessionId,
       programExerciseId: slot.programExerciseId,
     );
-    // Rebuild this single queue item from the planned program. We refetch
-    // all planned exercises for the day and pick the one matching this
-    // slot's programExerciseId — cheap on a typical workout day.
-    final planned =
-        await _programDao.listProgramExercises(current.programDayId);
-    final original = planned.firstWhere(
-      (v) => v.pe.id == slot.programExerciseId,
-      orElse: () => throw StateError(
-          'Cannot revert: program exercise no longer exists.'),
-    );
-    final restored = PlannedExercise.fromView(original);
     final newQueue = [...current.queue]..[queueIdx] = restored;
     final next = current.copyWith(queue: newQueue);
     state = AsyncValue.data(next);
@@ -839,7 +1234,10 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ref.read(restTimerProvider.notifier).dismiss();
     await _workoutDao.completeSession(current.sessionId);
     state = const AsyncValue.data(null);
-    await _liveActivity.end();
+    _invalidateLastSets();
+    // All activities, not only this process's: after a cold-start resume the
+    // previous process's card would otherwise survive the finish (QA DEL-18).
+    await _liveActivity.endAll();
     return current.sessionId;
   }
 
@@ -849,6 +1247,7 @@ class ActiveWorkoutController extends AsyncNotifier<ActiveSession?> {
     ref.read(restTimerProvider.notifier).dismiss(); // see finish() — SOW-03 §5
     await _workoutDao.abandonSession(current.sessionId);
     state = const AsyncValue.data(null);
-    await _liveActivity.end();
+    _invalidateLastSets();
+    await _liveActivity.endAll(); // see finish() — QA DEL-18
   }
 }

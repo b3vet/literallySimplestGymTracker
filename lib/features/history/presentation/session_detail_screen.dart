@@ -108,6 +108,9 @@ class SessionDetailScreen extends ConsumerWidget {
                   name: d.exerciseNames[entry.key] ?? 'Exercise',
                   sets: entry.value,
                   unit: unit,
+                  // H4 / DEC-0007 #10: same rule as the summary.
+                  isFirstExposure:
+                      prs.value?[entry.key]?.isFirstExposure ?? false,
                   onEdit: (s) => _editSet(
                     context,
                     ref,
@@ -182,11 +185,15 @@ class _ExerciseBlock extends StatelessWidget {
     required this.unit,
     required this.onEdit,
     required this.onDelete,
+    this.isFirstExposure = false,
   });
   final String exerciseId;
   final String name;
   final List<WorkoutSet> sets;
   final WeightUnit unit;
+
+  /// The exercise's first-ever session: a quiet FIRST TIME beside the name.
+  final bool isFirstExposure;
   final Future<void> Function(WorkoutSet) onEdit;
   final Future<void> Function(WorkoutSet) onDelete;
 
@@ -202,9 +209,27 @@ class _ExerciseBlock extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.only(bottom: LsGap.tight),
-              child: Text(
-                name.toUpperCase(),
-                style: LsType.displayM.copyWith(color: t.surface.text),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      name.toUpperCase(),
+                      style: LsType.displayM.copyWith(color: t.surface.text),
+                    ),
+                  ),
+                  if (isFirstExposure) ...[
+                    const SizedBox(width: 8),
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        'FIRST TIME',
+                        style:
+                            LsType.monoMeta.copyWith(color: t.accent.accent),
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
             for (var i = 0; i < sets.length; i++)
